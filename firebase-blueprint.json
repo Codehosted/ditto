@@ -1,0 +1,191 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user profile (Point of Contact) in the system.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "The unique ID of the user." },
+        "email": { "type": "string", "format": "email", "description": "The user's email address." },
+        "firstName": { "type": "string", "description": "POC First Name" },
+        "lastName": { "type": "string", "description": "POC Last Name" },
+        "phone": { "type": "string", "description": "POC Phone Number" },
+        "address": { "type": "string", "description": "POC Address" },
+        "city": { "type": "string", "description": "POC City" },
+        "state": { "type": "string", "description": "POC State" },
+        "zip": { "type": "string", "description": "POC Zip Code" },
+        "accountNumber": { "type": "string", "description": "Generated Ditto Account Number" },
+        "photoURL": { "type": "string", "description": "URL to the user's profile picture." },
+        "familyId": { "type": "string", "description": "The ID of the family this user belongs to." },
+        "role": { "type": "string", "enum": ["admin", "member", "vendor"], "description": "The user's role." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the user account was created." }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "Family": {
+      "title": "Family",
+      "description": "A family group sharing resources and deceased information.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the family." },
+        "ownerId": { "type": "string", "description": "The UID of the POC." },
+        "deceased": {
+          "type": "object",
+          "properties": {
+            "fullName": { "type": "string" },
+            "dob": { "type": "string", "format": "date" },
+            "dod": { "type": "string", "format": "date" },
+            "ssn": { "type": "string" },
+            "birthPlace": { "type": "string" },
+            "occupation": { "type": "string" },
+            "maritalStatus": { "type": "string" },
+            "legalInfo": { "type": "string" }
+          }
+        },
+        "preferences": {
+          "type": "object",
+          "properties": {
+            "burialType": { "type": "string", "enum": ["Burial", "Cremation", "Undecided"] },
+            "funeralHome": { "type": "string" },
+            "cemetery": { "type": "string" },
+            "church": { "type": "string" },
+            "repastSite": { "type": "string" },
+            "city": { "type": "string" },
+            "state": { "type": "string" },
+            "zip": { "type": "string" }
+          }
+        },
+        "subscriptionStatus": { "type": "string", "enum": ["free", "premium"], "description": "The current subscription tier." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the family group was created." }
+      },
+      "required": ["name", "ownerId", "createdAt"]
+    },
+    "Task": {
+      "title": "Task",
+      "description": "A task to be completed by the family.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The title of the task." },
+        "description": { "type": "string", "description": "Detailed description of the task." },
+        "status": { "type": "string", "enum": ["pending", "in-progress", "completed"], "description": "Current status of the task." },
+        "assignedTo": { "type": "string", "description": "The UID of the user assigned to this task." },
+        "dueDate": { "type": "string", "format": "date-time", "description": "When the task is due." },
+        "category": { "type": "string", "description": "Category of the task (e.g., Legal, Funeral, Financial)." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the task was created." }
+      },
+      "required": ["title", "status", "createdAt"]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "A sensitive document stored in the vault.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "The name of the document." },
+        "category": { "type": "string", "description": "Category (e.g., Death Certificate, Will, Insurance)." },
+        "url": { "type": "string", "description": "The URL to the stored file." },
+        "uploadedBy": { "type": "string", "description": "The UID of the user who uploaded the document." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the document was uploaded." },
+        "isEncrypted": { "type": "boolean", "description": "Whether the document requires an access key." },
+        "accessKeyHash": { "type": "string", "description": "Hash of the access key for verification." },
+        "signatureStatus": { "type": "string", "enum": ["none", "pending", "signed"], "description": "DocuSign status." }
+      },
+      "required": ["title", "category", "url", "uploadedBy", "createdAt"]
+    },
+    "Meeting": {
+      "title": "Meeting",
+      "description": "A scheduled video call via Zoom or Teams.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "vendorId": { "type": "string" },
+        "provider": { "type": "string", "enum": ["zoom", "teams"] },
+        "meetingUrl": { "type": "string" },
+        "startTime": { "type": "string", "format": "date-time" },
+        "topic": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "cancelled"] }
+      },
+      "required": ["familyId", "provider", "startTime", "topic"]
+    },
+    "SignatureRequest": {
+      "title": "Signature Request",
+      "description": "A DocuSign signature request.",
+      "type": "object",
+      "properties": {
+        "documentId": { "type": "string" },
+        "familyId": { "type": "string" },
+        "signerEmail": { "type": "string" },
+        "status": { "type": "string", "enum": ["sent", "delivered", "completed", "declined", "voided"] },
+        "envelopeId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["documentId", "familyId", "signerEmail", "status", "createdAt"]
+    },
+    "Vendor": {
+      "title": "Vendor",
+      "description": "A professional service provider (Funeral Home, Florist, etc.).",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the vendor." },
+        "category": { "type": "string", "description": "Category (e.g., Funeral Home, Florist)." },
+        "rating": { "type": "number", "description": "Average user rating." },
+        "address": { "type": "string", "description": "Physical address." },
+        "amenities": { "type": "array", "items": { "type": "string" }, "description": "List of available services/amenities." },
+        "distance": { "type": "string", "description": "Distance from the user (mocked for prototype)." },
+        "vendorOrgId": { "type": "string", "description": "The ID of the organization this vendor belongs to." }
+      },
+      "required": ["name", "category"]
+    },
+    "VendorOrganization": {
+      "title": "Vendor Organization",
+      "description": "A business entity managing multiple vendors or staff.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "taxId": { "type": "string" },
+        "stripeConnectId": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "staff": { "type": "array", "items": { "type": "string" }, "description": "List of staff UIDs." },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "ownerId", "createdAt"]
+    },
+    "Invitation": {
+      "title": "Invitation",
+      "description": "An invitation to join a family group.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "invitedBy": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "email", "status", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "Audit Log",
+      "description": "A record of sensitive actions in the system.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "action": { "type": "string" },
+        "resourceId": { "type": "string" },
+        "resourceType": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": "User", "description": "User profile data." },
+    "/families/{familyId}": { "schema": "Family", "description": "Family group metadata." },
+    "/families/{familyId}/tasks/{taskId}": { "schema": "Task", "description": "Tasks specific to a family." },
+    "/families/{familyId}/documents/{docId}": { "schema": "Document", "description": "Documents specific to a family." },
+    "/vendors/{vendorId}": { "schema": "Vendor", "description": "Global directory of vendors." },
+    "/vendorOrganizations/{orgId}": { "schema": "VendorOrganization", "description": "B2B Organization data." },
+    "/invitations/{inviteId}": { "schema": "Invitation", "description": "Family invitations." },
+    "/auditLogs/{logId}": { "schema": "AuditLog", "description": "System audit logs." }
+  }
+}

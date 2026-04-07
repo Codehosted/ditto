@@ -1,0 +1,266 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId} (matches Firebase Auth UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required)
+    //   - firstName: string (optional)
+    //   - lastName: string (optional)
+    //   - phone: string (optional)
+    //   - address: string (optional)
+    //   - city: string (optional)
+    //   - state: string (optional)
+    //   - zip: string (optional)
+    //   - accountNumber: string (optional)
+    //   - photoURL: string (optional)
+    //   - familyId: string (optional)
+    //   - role: string (required) - 'admin', 'member', 'vendor'
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: families
+    // Document ID: {familyId}
+    // Fields:
+    //   - name: string (required)
+    //   - ownerId: string (required)
+    //   - deceased: map (optional)
+    //   - preferences: map (optional)
+    //   - subscriptionStatus: string (required)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: families/{familyId}/tasks
+    // Document ID: {taskId}
+    // Fields:
+    //   - title: string (required) - Task title
+    //   - description: string (optional) - Task details
+    //   - status: string (required) - 'pending', 'in-progress', 'completed'
+    //   - assignedTo: string (optional) - UID of assigned user
+    //   - dueDate: timestamp (optional) - Task deadline
+    //   - category: string (optional) - Task category
+    //   - createdAt: timestamp (required) - Creation time
+    //
+    // Collection: families/{familyId}/documents
+    // Document ID: {docId}
+    // Fields:
+    //   - title: string (required) - Document name
+    //   - category: string (required) - Document category
+    //   - url: string (required) - File URL
+    //   - uploadedBy: string (required) - UID of uploader
+    //   - createdAt: timestamp (required) - Upload time
+    //
+    // Collection: vendors
+    // Document ID: {vendorId}
+    // Fields:
+    //   - name: string (required) - Vendor name
+    //   - category: string (required) - Vendor category
+    //   - rating: number (optional) - Average rating
+    //   - address: string (optional) - Physical address
+    //   - amenities: list (optional) - List of services
+    //   - distance: string (optional) - Distance string
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "bookdrakequantum@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isFamilyMember(familyId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.familyId == familyId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['uid', 'email', 'firstName', 'lastName', 'phone', 'address', 'city', 'state', 'zip', 'accountNumber', 'photoURL', 'familyId', 'role', 'createdAt']) &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['admin', 'member', 'vendor'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidFamily(data) {
+      return hasOnlyAllowedFields(['name', 'ownerId', 'deceased', 'preferences', 'checklist', 'subscriptionStatus', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.ownerId is string &&
+             data.subscriptionStatus in ['free', 'premium'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidTask(data) {
+      return hasOnlyAllowedFields(['title', 'description', 'status', 'assignedTo', 'dueDate', 'category', 'createdAt']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.status in ['pending', 'in-progress', 'completed'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidDocument(data) {
+      return hasOnlyAllowedFields(['title', 'category', 'url', 'uploadedBy', 'createdAt', 'isEncrypted', 'accessKeyHash', 'signatureStatus', 'status', 'content', 'generatedBy', 'metadata']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.category is string &&
+             (!('url' in data) || (data.url is string && isValidUrl(data.url))) &&
+             (!('uploadedBy' in data) || data.uploadedBy is string) &&
+             data.createdAt is timestamp &&
+             (!('isEncrypted' in data) || data.isEncrypted is bool) &&
+             (!('accessKeyHash' in data) || data.accessKeyHash is string) &&
+             (!('signatureStatus' in data) || data.signatureStatus in ['none', 'pending', 'signed']) &&
+             (!('status' in data) || data.status is string) &&
+             (!('content' in data) || data.content is string) &&
+             (!('generatedBy' in data) || data.generatedBy is string) &&
+             (!('metadata' in data) || data.metadata is map);
+    }
+
+    function isValidMeeting(data) {
+      return hasOnlyAllowedFields(['familyId', 'vendorId', 'provider', 'meetingUrl', 'startTime', 'topic', 'status']) &&
+             data.familyId is string &&
+             data.provider in ['zoom', 'teams'] &&
+             data.startTime is timestamp &&
+             data.topic is string &&
+             data.status in ['scheduled', 'completed', 'cancelled'];
+    }
+
+    function isValidSignatureRequest(data) {
+      return hasOnlyAllowedFields(['documentId', 'familyId', 'signerEmail', 'status', 'envelopeId', 'createdAt']) &&
+             data.documentId is string &&
+             data.familyId is string &&
+             data.signerEmail is string && isValidEmail(data.signerEmail) &&
+             data.status in ['sent', 'delivered', 'completed', 'declined', 'voided'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidVendor(data) {
+      return hasOnlyAllowedFields(['name', 'category', 'rating', 'address', 'amenities', 'distance']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.category is string;
+    }
+
+    function isVendorStaff(orgId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/vendorOrganizations/$(orgId)).data.staff.hasAny([request.auth.uid]);
+    }
+
+    function isVendorOwner(orgId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/vendorOrganizations/$(orgId)).data.ownerId == request.auth.uid;
+    }
+
+    function isValidVendorOrg(data) {
+      return hasOnlyAllowedFields(['name', 'taxId', 'stripeConnectId', 'ownerId', 'staff', 'createdAt']) &&
+             data.name is string && data.ownerId is string && data.createdAt is timestamp;
+    }
+
+    function isValidInvitation(data) {
+      return hasOnlyAllowedFields(['familyId', 'email', 'role', 'invitedBy', 'status', 'createdAt']) &&
+             data.familyId is string && data.email is string && data.status in ['pending', 'accepted', 'declined'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return hasOnlyAllowedFields(['userId', 'action', 'resourceId', 'resourceType', 'details', 'timestamp']) &&
+             data.userId is string && data.action is string && data.timestamp is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin()) &&
+                    request.resource.data.uid == resource.data.uid &&
+                    (request.resource.data.role == resource.data.role || isAdmin());
+    }
+
+    match /families/{familyId} {
+      allow read: if isFamilyMember(familyId) || isAdmin();
+      allow create: if isAuthenticated() && isValidFamily(request.resource.data) && (request.resource.data.ownerId == request.auth.uid || isAdmin());
+      allow update: if isAuthenticated() && isValidFamily(request.resource.data) && (isFamilyMember(familyId) || isAdmin()) &&
+                    request.resource.data.ownerId == resource.data.ownerId;
+    }
+
+    match /families/{familyId}/tasks/{taskId} {
+      allow read: if isFamilyMember(familyId) || isAdmin();
+      allow create: if isFamilyMember(familyId) && isValidTask(request.resource.data);
+      allow update: if isFamilyMember(familyId) && isValidTask(request.resource.data);
+      allow delete: if isFamilyMember(familyId);
+    }
+
+    match /families/{familyId}/documents/{docId} {
+      allow read: if isFamilyMember(familyId) || isAdmin();
+      allow create: if isFamilyMember(familyId) && isValidDocument(request.resource.data);
+      allow update: if isFamilyMember(familyId) && isValidDocument(request.resource.data);
+      allow delete: if isFamilyMember(familyId);
+    }
+
+    match /vendors/{vendorId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /vendorOrganizations/{orgId} {
+      allow read: if isVendorStaff(orgId) || isAdmin();
+      allow create: if isAuthenticated() && isValidVendorOrg(request.resource.data) && request.resource.data.ownerId == request.auth.uid;
+      allow update: if isVendorOwner(orgId) && isValidVendorOrg(request.resource.data);
+    }
+
+    match /invitations/{inviteId} {
+      allow read: if isAuthenticated() && (request.auth.token.email == resource.data.email || isFamilyMember(resource.data.familyId));
+      allow create: if isFamilyMember(request.resource.data.familyId) && isValidInvitation(request.resource.data);
+      allow update: if isAuthenticated() && request.auth.token.email == resource.data.email && request.resource.data.status in ['accepted', 'declined'];
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && isValidAuditLog(request.resource.data) && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /meetings/{meetingId} {
+      allow read: if isAuthenticated() && (isFamilyMember(resource.data.familyId) || isAdmin());
+      allow create: if isAuthenticated() && isValidMeeting(request.resource.data);
+      allow update: if isAuthenticated() && isValidMeeting(request.resource.data);
+    }
+
+    match /signatureRequests/{requestId} {
+      allow read: if isAuthenticated() && (isFamilyMember(resource.data.familyId) || isAdmin());
+      allow create: if isAuthenticated() && isValidSignatureRequest(request.resource.data);
+      allow update: if isAuthenticated() && isValidSignatureRequest(request.resource.data);
+    }
+  }
+}
