@@ -19,7 +19,8 @@ import {
 
 export { ErrorBoundary } from './ErrorBoundary';
 
-type AppProfile = {
+export type AppProfile = {
+  id?: string;
   uid: string;
   email: string;
   firstName?: string;
@@ -50,6 +51,8 @@ interface FirebaseContextType {
   signInWithGoogle: () => Promise<FirebaseUser>;
   signInAsGuest: () => Promise<FirebaseUser>;
   signOutUser: () => Promise<void>;
+  ensureFamilyContext: () => Promise<{ user: FirebaseUser; profile: AppProfile; family: any }>;
+  updateUserProfile: (updates: Partial<Pick<AppProfile, 'firstName' | 'lastName' | 'phone' | 'address' | 'city' | 'state' | 'zip'>>) => Promise<void>;
   setAppFamilyData: (data: any | null) => Promise<any | null>;
 }
 
@@ -75,21 +78,45 @@ function firstNameFor(user: FirebaseUser) {
   return 'Guest';
 }
 
-async function ensureUserProfile(user: FirebaseUser) {
+function lastNameFor(user: FirebaseUser) {
+  return user.displayName?.split(' ').slice(1).join(' ') || '';
+}
+
+function compactObject<T extends Record<string, unknown>>(value: T) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
+}
+
+function familyNameFor(profile: AppProfile | null, user: FirebaseUser) {
+  const lastName = profile?.lastName || lastNameFor(user);
+  const firstName = profile?.firstName || firstNameFor(user);
+  return `${lastName || firstName || 'Ditto'} Family`;
+}
+
+async function ensureUserProfile(user: FirebaseUser): Promise<AppProfile> {
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);
-  if (snap.exists()) return;
+  const existing = snap.exists() ? ({ id: snap.id, ...snap.data() } as AppProfile) : null;
 
-  await setDoc(userRef, {
+  const payload = compactObject({
     uid: user.uid,
-    email: fallbackEmailFor(user),
-    firstName: firstNameFor(user),
-    lastName: user.displayName?.split(' ').slice(1).join(' ') || '',
-    accountNumber: accountNumberFor(user.uid),
-    photoURL: user.photoURL || '',
-    role: 'member',
-    createdAt: Timestamp.now(),
+    email: user.email || existing?.email || fallbackEmailFor(user),
+    firstName: existing?.firstName || firstNameFor(user),
+    lastName: existing?.lastName ?? lastNameFor(user),
+    phone: existing?.phone,
+    address: existing?.address,
+    city: existing?.city,
+    state: existing?.state,
+    zip: existing?.zip,
+    accountNumber: existing?.accountNumber || accountNumberFor(user.uid),
+    photoURL: user.photoURL || existing?.photoURL || '',
+    familyId: existing?.familyId,
+    vendorOrgId: existing?.vendorOrgId,
+    role: existing?.role || 'member',
+    createdAt: existing?.createdAt || Timestamp.now(),
   });
+
+  await setDoc(userRef, payload, { merge: true });
+  return { id: user.uid, ...payload } as AppProfile;
 }
 
 export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -130,6 +157,100 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
     setDocuments([]);
     setVendors([]);
     setVendorOrg(null);
+  };
+
+  const updateUserProfile = async (updates: Partial<Pick<AppProfile, 'firstName' | 'lastName' | 'phone' | 'address' | 'city' | 'state' | 'zip'>>) => {
+    const signedInUser = await ensureSignedIn();
+    const currentProfile = await ensureUserProfile(signedInUser);
+    const nextProfile = compactObject({
+      uid: signedInUser.uid,
+      email: signedInUser.email || currentProfile.email || fallbackEmailFor(signedInUser),
+      firstName: updates.firstName ?? currentProfile.firstName ?? firstNameFor(signedInUser),
+      lastName: updates.lastName ?? currentProfile.lastName ?? lastNameFor(signedInUser),
+      phone: updates.phone ?? currentProfile.phone,
+      address: updates.address ?? currentProfile.address,
+      city: updates.city ?? currentProfile.city,
+      state: updates.state ?? currentProfile.state,
+      zip: updates.zip ?? currentProfile.zip,
+      accountNumber: currentProfile.accountNumber || accountNumberFor(signedInUser.uid),
+      photoURL: signedInUser.photoURL || currentProfile.photoURL || '',
+      familyId: currentProfile.familyId,
+      vendorOrgId: currentProfile.vendorOrgId,
+      role: currentProfile.role || 'member',
+      createdAt: currentProfile.createdAt || Timestamp.now(),
+    });
+
+    await setDoc(doc(db, 'users', signedInUser.uid), nextProfile, { merge: true });
+    setProfile({ id: signedInUser.uid, ...nextProfile } as AppProfile);
+  };
+
+  const ensureFamilyContext = async () => {
+    const signedInUser = await ensureSignedIn();
+    let currentProfile = await ensureUserProfile(signedInUser);
+    const familyId = currentProfile.familyId || `family-${signedInUser.uid}`;
+    const familyRef = doc(db, 'families', familyId);
+
+    if (!currentProfile.familyId) {
+      const familyPayload = {
+        name: familyNameFor(currentProfile, signedInUser),
+        ownerId: signedInUser.uid,
+        deceased: {},
+        preferences: {},
+        checklist: {},
+        subscriptionStatus: 'free',
+        nextSteps: null,
+        localBusinesses: [],
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+      };
+
+      await setDoc(familyRef, familyPayload, { merge: true });
+      const nextProfile = compactObject({
+        ...currentProfile,
+        uid: signedInUser.uid,
+        email: signedInUser.email || currentProfile.email || fallbackEmailFor(signedInUser),
+        firstName: currentProfile.firstName || firstNameFor(signedInUser),
+        lastName: currentProfile.lastName ?? lastNameFor(signedInUser),
+        accountNumber: currentProfile.accountNumber || accountNumberFor(signedInUser.uid),
+        photoURL: signedInUser.photoURL || currentProfile.photoURL || '',
+        role: currentProfile.role || 'member',
+        familyId,
+        createdAt: currentProfile.createdAt || Timestamp.now(),
+      });
+
+      delete (nextProfile as any).id;
+      await setDoc(doc(db, 'users', signedInUser.uid), nextProfile, { merge: true });
+      currentProfile = { id: signedInUser.uid, ...nextProfile } as AppProfile;
+      const family = { id: familyId, ...familyPayload };
+      setProfile(currentProfile);
+      setFamilyData(family);
+      return { user: signedInUser, profile: currentProfile, family };
+    }
+
+    const familySnap = await getDoc(familyRef);
+    if (familySnap.exists()) {
+      const family = { id: familySnap.id, ...familySnap.data() };
+      setFamilyData(family);
+      return { user: signedInUser, profile: currentProfile, family };
+    }
+
+    const familyPayload = {
+      name: familyNameFor(currentProfile, signedInUser),
+      ownerId: signedInUser.uid,
+      deceased: {},
+      preferences: {},
+      checklist: {},
+      subscriptionStatus: 'free',
+      nextSteps: null,
+      localBusinesses: [],
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    };
+
+    await setDoc(familyRef, familyPayload, { merge: true });
+    const family = { id: familyId, ...familyPayload };
+    setFamilyData(family);
+    return { user: signedInUser, profile: currentProfile, family };
   };
 
   useEffect(() => {
@@ -225,12 +346,11 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
       updatedAt: Timestamp.now(),
     };
 
-    await setDoc(doc(db, 'families', familyId), payload, { merge: true });
-    await setDoc(doc(db, 'users', signedInUser.uid), {
+    const profilePayload = compactObject({
       uid: signedInUser.uid,
       email: fallbackEmailFor(signedInUser),
       firstName: data.profile?.firstName || firstNameFor(signedInUser),
-      lastName: data.profile?.lastName || signedInUser.displayName?.split(' ').slice(1).join(' ') || '',
+      lastName: data.profile?.lastName || lastNameFor(signedInUser),
       phone: data.profile?.phone || '',
       address: data.profile?.address || '',
       city: data.profile?.city || data.preferences?.city || '',
@@ -241,7 +361,13 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
       role: data.profile?.role || profile?.role || 'member',
       familyId,
       createdAt: profile?.createdAt || Timestamp.now(),
-    }, { merge: true });
+    });
+
+    await setDoc(doc(db, 'families', familyId), payload, { merge: true });
+    await setDoc(doc(db, 'users', signedInUser.uid), profilePayload, { merge: true });
+
+    setFamilyData({ id: familyId, ...payload });
+    setProfile({ id: signedInUser.uid, ...profilePayload } as AppProfile);
 
     return { id: familyId, ...payload };
   };
@@ -259,6 +385,8 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
     signInWithGoogle,
     signInAsGuest,
     signOutUser,
+    ensureFamilyContext,
+    updateUserProfile,
     setAppFamilyData,
   }), [user, profile, loading, familyData, tasks, documents, vendors, vendorOrg]);
 

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Bell, 
@@ -57,7 +57,18 @@ const DashboardCard = ({ children, className = "", onClick }: { children: React.
 export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const { user, profile, familyData, tasks, documents, signOutUser } = useFirebase();
+  const { user, profile, familyData, tasks, documents, signOutUser, updateUserProfile } = useFirebase();
+  const [profileDraft, setProfileDraft] = useState({
+    firstName: "",
+    lastName: "",
+    phone: "",
+    address: "",
+    city: "",
+    state: "",
+    zip: "",
+  });
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileStatus, setProfileStatus] = useState("");
 
   // Unified timeline schema stub
   const timelineEvents = [
@@ -104,9 +115,41 @@ export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void })
     if (onLogoClick) onLogoClick();
   };
 
+  useEffect(() => {
+    setProfileDraft({
+      firstName: profile?.firstName || user?.displayName?.split(" ")[0] || "",
+      lastName: profile?.lastName || user?.displayName?.split(" ").slice(1).join(" ") || "",
+      phone: profile?.phone || "",
+      address: profile?.address || "",
+      city: profile?.city || "",
+      state: profile?.state || "",
+      zip: profile?.zip || "",
+    });
+  }, [profile, user]);
+
+  const handleProfileDraftChange = (field: keyof typeof profileDraft, value: string) => {
+    setProfileDraft((previous) => ({ ...previous, [field]: value }));
+    setProfileStatus("");
+  };
+
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    setProfileStatus("");
+    try {
+      await updateUserProfile(profileDraft);
+      setProfileStatus("Profile saved.");
+    } catch (error) {
+      console.error("Error saving profile", error);
+      setProfileStatus("Profile could not be saved.");
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
   const firstName = profile?.firstName || user?.displayName?.split(" ")[0] || "there";
   const lovedOneName = familyData?.deceased?.fullName || "your loved one";
   const accountNumber = profile?.accountNumber || "DITTO-7721X";
+  const profilePhoto = profile?.photoURL || user?.photoURL || "https://picsum.photos/seed/user/100/100";
 
   return (
     <div className="min-h-screen bg-stone-50 flex">
@@ -179,7 +222,7 @@ export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void })
               <span className="absolute top-2 right-2 w-2 h-2 bg-stone-400 rounded-full border-2 border-white" />
             </button>
             <div className="w-8 h-8 rounded-full bg-stone-200 border border-stone-300 overflow-hidden">
-              <img src={user?.photoURL || "https://picsum.photos/seed/user/100/100"} alt="Profile" referrerPolicy="no-referrer" />
+              <img src={profilePhoto} alt="Profile" referrerPolicy="no-referrer" />
             </div>
           </div>
         </header>
@@ -579,13 +622,49 @@ export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void })
                 </header>
                 <div className="grid md:grid-cols-2 gap-8">
                   <Section title="Account Settings">
-                    <DashboardCard className="space-y-4">
-                      <div className="flex items-center justify-between p-4 bg-stone-50 rounded-xl border border-stone-100">
-                        <div>
-                          <p className="text-sm font-medium text-stone-900">Profile Information</p>
-                          <p className="text-xs text-stone-500 font-light">Update your name and contact details</p>
+                    <DashboardCard className="space-y-5">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-full bg-stone-200 border border-stone-300 overflow-hidden shrink-0">
+                          <img src={profilePhoto} alt="Profile" referrerPolicy="no-referrer" />
                         </div>
-                        <ChevronRight size={16} className="text-stone-400" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-stone-900 truncate">{profileDraft.firstName || "Profile"} {profileDraft.lastName}</p>
+                          <p className="text-xs text-stone-500 font-light truncate">{profile?.email || user?.email || "Signed-in family member"}</p>
+                          <p className="text-[10px] text-stone-400 uppercase tracking-widest mt-1">Account # {accountNumber}</p>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {[
+                          { key: "firstName", label: "First name" },
+                          { key: "lastName", label: "Last name" },
+                          { key: "phone", label: "Phone" },
+                          { key: "address", label: "Address" },
+                          { key: "city", label: "City" },
+                          { key: "state", label: "State" },
+                          { key: "zip", label: "Zip" },
+                        ].map((field) => (
+                          <label key={field.key} className={field.key === "address" ? "md:col-span-2 space-y-1" : "space-y-1"}>
+                            <span className="text-[10px] font-medium uppercase tracking-widest text-stone-400">{field.label}</span>
+                            <input
+                              value={profileDraft[field.key as keyof typeof profileDraft]}
+                              onChange={(event) => handleProfileDraftChange(field.key as keyof typeof profileDraft, event.target.value)}
+                              className="w-full rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-stone-700 outline-none focus:border-stone-400"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className={`text-xs font-light ${profileStatus.includes("could not") ? "text-red-500" : "text-stone-500"}`}>
+                          {profileStatus || "Profile details are used for uploads, signatures, and family coordination."}
+                        </p>
+                        <button
+                          type="button"
+                          disabled={isSavingProfile}
+                          onClick={handleSaveProfile}
+                          className="shrink-0 px-4 py-2 bg-stone-900 text-stone-50 rounded-xl text-sm font-medium hover:bg-stone-800 transition-all disabled:opacity-50"
+                        >
+                          {isSavingProfile ? "Saving..." : "Save Profile"}
+                        </button>
                       </div>
                       <div className="flex items-center justify-between p-4 bg-stone-50 rounded-xl border border-stone-100">
                         <div>

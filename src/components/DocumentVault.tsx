@@ -30,9 +30,10 @@ import {
   Sparkles
 } from "lucide-react";
 import { useFirebase } from "./FirebaseProvider";
-import { db, storage, storageRef, uploadBytes, getDownloadURL, collection, addDoc, Timestamp, OperationType, handleFirestoreError } from "../firebase";
+import { OperationType, handleFirestoreError } from "../firebase";
 import { generateAccessKey, hashKey, verifyKey } from "../services/encryptionService";
 import { sendSignatureRequest } from "../services/signatureService";
+import { uploadFamilyDocument } from "../services/documentService";
 
 const CATEGORIES = [
   { id: "all", label: "All Documents", icon: FileText },
@@ -45,11 +46,12 @@ const CATEGORIES = [
 ];
 
 export default function DocumentVault() {
-  const { documents, familyData, user, profile, ensureSignedIn } = useFirebase();
+  const { documents, familyData, user, profile, ensureFamilyContext } = useFirebase();
   const [activeCategory, setActiveCategory] = useState("all");
   const [isDragging, setIsDragging] = useState(false);
   const [showUploadSuccess, setShowUploadSuccess] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [isSecure, setIsSecure] = useState(false);
   const [generatedKey, setGeneratedKey] = useState<string | null>(null);
   const [showKeyModal, setShowKeyModal] = useState(false);
@@ -69,45 +71,29 @@ export default function DocumentVault() {
     setIsDragging(false);
   }, []);
 
-  const handleUpload = async (files: FileList | null) => {
-    if (!files || files.length === 0 || !familyData) return;
+  const handleUpload = useCallback(async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
     
     setIsUploading(true);
+    setUploadError(null);
     try {
-      const signedInUser = await ensureSignedIn();
+      const { user: signedInUser, profile: uploadProfile, family } = await ensureFamilyContext();
+      const familyId = family.id;
       let lastKey = null;
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const key = isSecure ? generateAccessKey() : null;
         lastKey = key;
-        const storagePath = `families/${familyData.id}/documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
-        const fileRef = storageRef(storage, storagePath);
-        await uploadBytes(fileRef, file, { contentType: file.type || "application/octet-stream" });
-        const url = await getDownloadURL(fileRef);
-
-        const docData: any = {
-          title: file.name,
-          name: file.name,
+        await uploadFamilyDocument({
+          file,
+          familyId,
+          user: signedInUser,
+          profile: uploadProfile || profile,
           category: activeCategory === "all" ? "personal" : activeCategory,
-          url,
-          storagePath,
-          size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-          contentType: file.type || "application/octet-stream",
-          uploadedBy: signedInUser.uid,
-          uploadedByName: signedInUser.displayName || profile?.firstName || "You",
-          uploadedByUid: signedInUser.uid,
-          createdAt: Timestamp.now(),
-          sharedWith: [signedInUser.displayName || profile?.firstName || "You"],
           isEncrypted: isSecure,
-          signatureStatus: 'none'
-        };
-
-        if (isSecure && key) {
-          docData.accessKeyHash = hashKey(key);
-        }
-
-        const docsRef = collection(db, 'families', familyData.id, 'documents');
-        await addDoc(docsRef, docData);
+          accessKeyHash: isSecure && key ? hashKey(key) : undefined,
+          source: "vault",
+        });
       }
       
       if (isSecure && lastKey) {
@@ -118,17 +104,22 @@ export default function DocumentVault() {
         setTimeout(() => setShowUploadSuccess(false), 3000);
       }
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `families/${familyData.id}/documents`);
+      try {
+        handleFirestoreError(error, OperationType.WRITE, familyData?.id ? `families/${familyData.id}/documents` : "families/{familyId}/documents");
+      } catch (normalizedError) {
+        const message = normalizedError instanceof Error ? normalizedError.message : String(normalizedError);
+        setUploadError(message.includes("50MB") ? "Files must be 50MB or smaller." : "Upload failed. Please check your connection and Firebase permissions.");
+      }
     } finally {
       setIsUploading(false);
     }
-  };
+  }, [activeCategory, familyData?.id, isSecure, profile, ensureFamilyContext]);
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    handleUpload(e.dataTransfer.files);
-  }, [familyData, user, activeCategory, isSecure]);
+    void handleUpload(e.dataTransfer.files);
+  }, [handleUpload]);
 
   const filteredDocs = activeCategory === "all" 
     ? documents 
@@ -221,6 +212,12 @@ export default function DocumentVault() {
           <p className="text-stone-500 text-sm font-light">or click to browse your files</p>
         </div>
         <p className="text-[10px] text-stone-400 uppercase tracking-widest">Supports PDF, JPG, PNG up to 50MB</p>
+        {uploadError && (
+          <div className="flex items-center gap-2 rounded-full border border-red-100 bg-red-50 px-4 py-2 text-sm text-red-600">
+            <AlertTriangle size={14} />
+            <span>{uploadError}</span>
+          </div>
+        )}
 
         <AnimatePresence>
           {(showUploadSuccess || isUploading) && (

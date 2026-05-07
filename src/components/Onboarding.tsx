@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { ArrowLeft, ArrowRight, Check, Upload } from "lucide-react";
 import { db, doc, setDoc, Timestamp } from "../firebase";
 import { useFirebase } from "./FirebaseProvider";
 import { generateNextStepsAndDocs, findLocalBusinesses } from "../services/aiService";
+import { uploadFamilyDocument } from "../services/documentService";
 
 interface OnboardingData {
   // POC Demographics
@@ -163,6 +164,30 @@ const DEFAULT_BUSINESSES = [
   },
 ];
 
+const EMPTY_ONBOARDING_DATA: OnboardingData = {
+  firstName: "",
+  lastName: "",
+  phone: "",
+  role: "Family Member",
+  address: "",
+  city: "",
+  state: "",
+  zip: "",
+  deceasedFullName: "",
+  deceasedDOB: "",
+  deceasedDOD: "",
+  deceasedSSN: "",
+  deceasedBirthPlace: "",
+  deceasedOccupation: "",
+  deceasedMaritalStatus: "",
+  deceasedLegalInfo: "",
+  burialPreference: "",
+  funeralHome: "",
+  cemetery: "",
+  church: "",
+  repastSite: "",
+};
+
 function docIdFrom(value: string, fallback: string) {
   const slug = value
     .toLowerCase()
@@ -206,6 +231,12 @@ function flattenGeneratedTasks(nextSteps: any) {
   });
 }
 
+function onboardingDocumentCategory(itemId: string) {
+  if (itemId.includes("insurance")) return "insurance";
+  if (itemId.includes("birth") || itemId.includes("death") || itemId.includes("ss")) return "legal";
+  return "personal";
+}
+
 async function seedFamilyCollections(familyId: string, nextSteps: any, businesses: any[]) {
   const taskWrites = flattenGeneratedTasks(nextSteps).map(({ id, data }) =>
     setDoc(doc(db, "families", familyId, "tasks", id), data, { merge: true })
@@ -239,58 +270,72 @@ async function seedFamilyCollections(familyId: string, nextSteps: any, businesse
 
 export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete: () => void; onExit: () => void; onLogin?: () => void }) {
   const [currentStep, setCurrentStep] = useState(0);
-  const [data, setData] = useState<OnboardingData>({
-    firstName: "John",
-    lastName: "Doe",
-    phone: "(555) 123-4567",
-    role: "Family Member",
-    address: "123 Main St",
-    city: "Springfield",
-    state: "IL",
-    zip: "62704",
-    deceasedFullName: "Jane Doe",
-    deceasedDOB: "1950-01-01",
-    deceasedDOD: "2024-01-01",
-    deceasedSSN: "000-00-0000",
-    deceasedBirthPlace: "Chicago, IL",
-    deceasedOccupation: "Teacher",
-    deceasedMaritalStatus: "Widowed",
-    deceasedLegalInfo: "None",
-    burialPreference: "Cremation",
-    funeralHome: "Grace Memorial",
-    cemetery: "Springfield Cemetery",
-    church: "First Church",
-    repastSite: "Community Center",
-  });
+  const [data, setData] = useState<OnboardingData>(EMPTY_ONBOARDING_DATA);
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
-  const { user, profile, setAppFamilyData, ensureSignedIn } = useFirebase();
+  const { user, profile, setAppFamilyData, ensureSignedIn, ensureFamilyContext } = useFirebase();
   const [isSaving, setIsSaving] = useState(false);
   const [savingStatus, setSavingStatus] = useState("Finalizing your account...");
+  const [uploadedDocs, setUploadedDocs] = useState<Record<string, string[]>>({});
+  const [uploadingDocId, setUploadingDocId] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [completedAccount, setCompletedAccount] = useState<{ accountNumber: string; email: string } | null>(null);
+  const uploadInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  useEffect(() => {
+    setData((previous) => ({
+      ...previous,
+      firstName: previous.firstName || profile?.firstName || user?.displayName?.split(" ")[0] || "",
+      lastName: previous.lastName || profile?.lastName || user?.displayName?.split(" ").slice(1).join(" ") || "",
+      phone: previous.phone || profile?.phone || "",
+      address: previous.address || profile?.address || "",
+      city: previous.city || profile?.city || "",
+      state: previous.state || profile?.state || "",
+      zip: previous.zip || profile?.zip || "",
+      role: previous.role || (profile?.role === "vendor" ? "Funeral Home / Vendor" : "Family Member"),
+    }));
+  }, [profile, user]);
 
   const handleClearForm = () => {
-    setData({
-      firstName: "",
-      lastName: "",
-      phone: "",
-      role: "Family Member",
-      address: "",
-      city: "",
-      state: "",
-      zip: "",
-      deceasedFullName: "",
-      deceasedDOB: "",
-      deceasedDOD: "",
-      deceasedSSN: "",
-      deceasedBirthPlace: "",
-      deceasedOccupation: "",
-      deceasedMaritalStatus: "",
-      deceasedLegalInfo: "",
-      burialPreference: "",
-      funeralHome: "",
-      cemetery: "",
-      church: "",
-      repastSite: "",
-    });
+    setData(EMPTY_ONBOARDING_DATA);
+    setUploadedDocs({});
+    setUploadError(null);
+  };
+
+  const handleOnboardingUpload = async (itemId: string, files: FileList | null) => {
+    if (!files || files.length === 0) return;
+
+    setUploadingDocId(itemId);
+    setUploadError(null);
+    try {
+      const { user: signedInUser, profile: uploadProfile, family } = await ensureFamilyContext();
+      const uploadedNames: string[] = [];
+
+      for (let index = 0; index < files.length; index++) {
+        const file = files[index];
+        await uploadFamilyDocument({
+          file,
+          familyId: family.id,
+          user: signedInUser,
+          profile: uploadProfile || profile,
+          category: onboardingDocumentCategory(itemId),
+          source: "onboarding",
+        });
+        uploadedNames.push(file.name);
+      }
+
+      setUploadedDocs((previous) => ({
+        ...previous,
+        [itemId]: [...(previous[itemId] || []), ...uploadedNames],
+      }));
+      setChecklist((previous) => ({ ...previous, docs_uploaded: true }));
+    } catch (error) {
+      const message = error instanceof Error && error.message.includes("50MB")
+        ? "Files must be 50MB or smaller."
+        : "Upload failed. Please confirm Firebase Storage rules are deployed and try again.";
+      setUploadError(message);
+    } finally {
+      setUploadingDocId(null);
+    }
   };
 
   const handleNext = async () => {
@@ -299,7 +344,7 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
     } else if (currentStep === STEPS.length - 1) {
       setIsSaving(true);
       try {
-        await ensureSignedIn();
+        const signedInUser = await ensureSignedIn();
         setSavingStatus("Generating personalized next steps and finding local businesses...");
         const location = { city: data.city, state: data.state, zipCode: data.zip };
         
@@ -324,7 +369,7 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
 
         setSavingStatus("Saving to Firebase...");
         const savedFamily = await setAppFamilyData({
-          id: user?.uid ? `family-${user.uid}` : undefined,
+          id: `family-${signedInUser.uid}`,
           profile: {
             firstName: data.firstName,
             lastName: data.lastName,
@@ -335,7 +380,16 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
             zip: data.zip,
             role: data.role === "Funeral Home / Vendor" ? "vendor" : "member",
           },
-          deceased: { fullName: data.deceasedFullName },
+          deceased: {
+            fullName: data.deceasedFullName,
+            dob: data.deceasedDOB,
+            dod: data.deceasedDOD,
+            ssn: data.deceasedSSN,
+            birthPlace: data.deceasedBirthPlace,
+            occupation: data.deceasedOccupation,
+            maritalStatus: data.deceasedMaritalStatus,
+            legalInfo: data.deceasedLegalInfo,
+          },
           preferences: {
             burialType: data.burialPreference,
             zip: data.zip,
@@ -355,6 +409,10 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
           await seedFamilyCollections(savedFamily.id, nextSteps, businesses);
         }
 
+        setCompletedAccount({
+          accountNumber: profile?.accountNumber || `DITTO-${signedInUser.uid.slice(0, 5).toUpperCase()}`,
+          email: signedInUser.email || profile?.email || `guest-${signedInUser.uid}@ditto.local`,
+        });
         setCurrentStep(STEPS.length);
       } catch (error) {
         console.error("Error saving onboarding data", error);
@@ -414,8 +472,8 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
                   <div className="space-y-4">
                     <h2 className="text-4xl font-serif text-stone-900 leading-tight">Welcome to Ditto.</h2>
                     <p className="text-stone-600 font-light leading-relaxed max-w-md mx-auto">
-                      Your account has been created. Your Ditto Account # is <span className="font-medium text-stone-900">{profile?.accountNumber || "DITTO-7721X"}</span>.
-                      We have sent a confirmation email to <span className="font-medium text-stone-900">{user?.email || "your email address"}</span>.
+                      Your account has been created. Your Ditto Account # is <span className="font-medium text-stone-900">{completedAccount?.accountNumber || profile?.accountNumber || "DITTO-7721X"}</span>.
+                      We have sent a confirmation email to <span className="font-medium text-stone-900">{completedAccount?.email || user?.email || "your email address"}</span>.
                     </p>
                     <div className="p-6 bg-white border border-stone-200 rounded-2xl text-left space-y-4">
                       <h4 className="text-sm font-medium uppercase tracking-widest text-stone-400">Next Steps</h4>
@@ -475,15 +533,41 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
                           </div>
                           <div>
                             <p className="font-medium text-stone-900">{item.label}</p>
-                            <p className="text-xs text-stone-400">PDF, JPG, or PNG</p>
+                            <p className="text-xs text-stone-400">
+                              {uploadedDocs[item.id]?.length
+                                ? uploadedDocs[item.id].join(", ")
+                                : "PDF, JPG, or PNG"}
+                            </p>
                           </div>
                         </div>
-                        <button className="px-4 py-2 bg-stone-50 text-stone-600 rounded-lg text-sm font-medium hover:bg-stone-100 transition-all">
-                          Select File
+                        <input
+                          ref={(node) => {
+                            uploadInputRefs.current[item.id] = node;
+                          }}
+                          type="file"
+                          multiple
+                          className="hidden"
+                          onChange={(event) => {
+                            void handleOnboardingUpload(item.id, event.currentTarget.files);
+                            event.currentTarget.value = "";
+                          }}
+                        />
+                        <button
+                          type="button"
+                          disabled={uploadingDocId === item.id}
+                          onClick={() => uploadInputRefs.current[item.id]?.click()}
+                          className="px-4 py-2 bg-stone-50 text-stone-600 rounded-lg text-sm font-medium hover:bg-stone-100 transition-all disabled:opacity-50"
+                        >
+                          {uploadingDocId === item.id ? "Uploading..." : uploadedDocs[item.id]?.length ? "Add More" : "Select File"}
                         </button>
                       </div>
                     ))}
                   </div>
+                  {uploadError && (
+                    <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-600">
+                      {uploadError}
+                    </div>
+                  )}
                   <button 
                     onClick={handleNext} 
                     className="w-full py-4 bg-stone-900 text-stone-50 rounded-xl font-medium hover:bg-stone-800 transition-all"
