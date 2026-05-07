@@ -55,29 +55,6 @@ function spawnWatcher(command: string, args: string[]) {
   return proc;
 }
 
-await rm(devDir, { recursive: true, force: true });
-await mkdir(assetsDir, { recursive: true });
-
-const watchers = [
-  spawnWatcher("bun", [
-    "build",
-    "./src/main.tsx",
-    "--target=browser",
-    `--outdir=${assetsDir}`,
-    "--public-path=/assets/",
-    "--env=inline",
-    "--sourcemap=inline",
-    "--watch",
-  ]),
-  spawnWatcher("./node_modules/.bin/tailwindcss", [
-    "-i",
-    "./src/index.css",
-    "-o",
-    "./.bun-dev/assets/styles.css",
-    "--watch=always",
-  ]),
-];
-
 const server = Bun.serve({
   hostname: "0.0.0.0",
   port,
@@ -104,6 +81,29 @@ const server = Bun.serve({
     });
   },
 });
+
+await rm(devDir, { recursive: true, force: true });
+await mkdir(assetsDir, { recursive: true });
+
+const watchers = [
+  spawnWatcher("bun", [
+    "build",
+    "./src/main.tsx",
+    "--target=browser",
+    `--outdir=${assetsDir}`,
+    "--public-path=/assets/",
+    "--env=inline",
+    "--sourcemap=inline",
+    "--watch",
+  ]),
+  spawnWatcher("./node_modules/.bin/tailwindcss", [
+    "-i",
+    "./src/index.css",
+    "-o",
+    "./.bun-dev/assets/styles.css",
+    "--watch=always",
+  ]),
+];
 
 console.log(`Ditto Bun dev server ready at http://localhost:${server.port}`);
 
