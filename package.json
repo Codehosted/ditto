@@ -29,7 +29,8 @@
     "react-leaflet": "^5.0.0",
     "recharts": "^3.8.0",
     "stripe": "^20.4.0",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "vercel": "^53.2.0"
   },
   "devDependencies": {
     "@types/crypto-js": "^4.2.2",
