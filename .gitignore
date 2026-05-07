@@ -1,6 +1,8 @@
 node_modules/
+.bun-dev/
 build/
 dist/
+dist-bun/
 coverage/
 .DS_Store
 *.log

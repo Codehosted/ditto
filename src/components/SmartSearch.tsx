@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Search, X, Filter, MapPin, Star, Clock, ChevronRight } from "lucide-react";
-import { db, collection, onSnapshot, query } from "../firebase";
+import { db, collection, onSnapshot, query as firestoreQuery } from "../firebase";
 
 interface Suggestion {
   id: string;
@@ -46,7 +46,7 @@ export default function SmartSearch() {
     : DEFAULT_AMENITIES;
 
   useEffect(() => {
-    const unsubscribe = onSnapshot(query(collection(db, "vendors")), (snapshot) => {
+    const unsubscribe = onSnapshot(firestoreQuery(collection(db, "vendors")), (snapshot) => {
       const firebaseVendors = snapshot.docs.map((item) => {
         const data = item.data();
         return {

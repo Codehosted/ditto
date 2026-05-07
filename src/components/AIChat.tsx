@@ -54,7 +54,7 @@ export default function AIChat() {
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: (process as any).env.GEMINI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const model = "gemini-3-flash-preview";
       
       const chatHistory = messages.map(m => ({

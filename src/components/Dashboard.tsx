@@ -36,7 +36,6 @@ import Obituary from "./Obituary";
 import { useFirebase } from "./FirebaseProvider";
 
 import { DayPicker } from "react-day-picker";
-import "react-day-picker/dist/style.css";
 import { format } from "date-fns";
 
 const Section = ({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) => (
