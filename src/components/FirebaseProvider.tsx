@@ -92,6 +92,20 @@ function familyNameFor(profile: AppProfile | null, user: FirebaseUser) {
   return `${lastName || firstName || 'Ditto'} Family`;
 }
 
+function defaultFamilyPayload(profile: AppProfile | null, user: FirebaseUser) {
+  return {
+    name: familyNameFor(profile, user),
+    ownerId: user.uid,
+    deceased: {},
+    preferences: {},
+    checklist: {},
+    subscriptionStatus: 'free',
+    localBusinesses: [],
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+  };
+}
+
 async function ensureUserProfile(user: FirebaseUser): Promise<AppProfile> {
   const userRef = doc(db, 'users', user.uid);
   const snap = await getDoc(userRef);
@@ -191,20 +205,6 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
     const familyRef = doc(db, 'families', familyId);
 
     if (!currentProfile.familyId) {
-      const familyPayload = {
-        name: familyNameFor(currentProfile, signedInUser),
-        ownerId: signedInUser.uid,
-        deceased: {},
-        preferences: {},
-        checklist: {},
-        subscriptionStatus: 'free',
-        nextSteps: null,
-        localBusinesses: [],
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
-      };
-
-      await setDoc(familyRef, familyPayload, { merge: true });
       const nextProfile = compactObject({
         ...currentProfile,
         uid: signedInUser.uid,
@@ -221,6 +221,8 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
       delete (nextProfile as any).id;
       await setDoc(doc(db, 'users', signedInUser.uid), nextProfile, { merge: true });
       currentProfile = { id: signedInUser.uid, ...nextProfile } as AppProfile;
+      const familyPayload = defaultFamilyPayload(currentProfile, signedInUser);
+      await setDoc(familyRef, familyPayload, { merge: true });
       const family = { id: familyId, ...familyPayload };
       setProfile(currentProfile);
       setFamilyData(family);
@@ -234,18 +236,7 @@ export const FirebaseProvider: React.FC<{ children: ReactNode }> = ({ children }
       return { user: signedInUser, profile: currentProfile, family };
     }
 
-    const familyPayload = {
-      name: familyNameFor(currentProfile, signedInUser),
-      ownerId: signedInUser.uid,
-      deceased: {},
-      preferences: {},
-      checklist: {},
-      subscriptionStatus: 'free',
-      nextSteps: null,
-      localBusinesses: [],
-      createdAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-    };
+    const familyPayload = defaultFamilyPayload(currentProfile, signedInUser);
 
     await setDoc(familyRef, familyPayload, { merge: true });
     const family = { id: familyId, ...familyPayload };

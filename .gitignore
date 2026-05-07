@@ -10,3 +10,4 @@ coverage/
 !.env.example
 remix_-ditto.zip
 .vercel
+.playwright-mcp/
