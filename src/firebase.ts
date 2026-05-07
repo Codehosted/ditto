@@ -1,12 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer, collection, onSnapshot, query, where, setDoc, updateDoc, deleteDoc, addDoc, Timestamp } from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInAnonymously, signInWithPopup, signOut, onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { getFirestore, doc, getDoc, getDocFromServer, collection, onSnapshot, query, where, setDoc, updateDoc, deleteDoc, addDoc, Timestamp } from 'firebase/firestore';
+import { getStorage, ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const storage = getStorage(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Error Handling Spec for Firestore Permissions
@@ -74,5 +76,5 @@ async function testConnection() {
 
 testConnection();
 
-export { signInWithPopup, signOut, onAuthStateChanged, collection, onSnapshot, query, where, setDoc, updateDoc, deleteDoc, addDoc, doc, Timestamp };
+export { signInAnonymously, signInWithPopup, signOut, onAuthStateChanged, collection, onSnapshot, query, where, setDoc, updateDoc, deleteDoc, addDoc, doc, getDoc, storageRef, uploadBytes, getDownloadURL, Timestamp };
 export type { FirebaseUser };

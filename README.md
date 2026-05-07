@@ -1,20 +1,37 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Ditto
 
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/58cc38de-a7de-4c7e-b964-465e16b3dc22
+Firebase-backed Vite/React prototype for family onboarding, generated next steps, document storage, vendor coordination, invitations, and checkout requests.
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
-
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+   `bun install`
+2. Create `.env.local` from `.env.example` and set `GEMINI_API_KEY`.
 3. Run the app:
-   `npm run dev`
+   `bun run dev`
+
+## Firebase Setup
+
+The app reads Firebase config from `firebase-applet-config.json`.
+
+Enable these Firebase products for full local use:
+
+- Authentication: Google sign-in and Anonymous sign-in.
+- Firestore: deploy `firestore.rules`.
+- Storage: deploy `storage.rules`.
+
+Runtime data now lives in Firestore:
+
+- `users/{uid}`
+- `families/{familyId}`
+- `families/{familyId}/tasks`
+- `families/{familyId}/documents`
+- `families/{familyId}/vendors`
+- `invitations`
+- `checkoutRequests`
+
+Uploaded files are stored in Firebase Storage under `families/{familyId}/documents/...`.
+
+## Notes
+
+Gemini powers onboarding guide generation and Clara chat. If `GEMINI_API_KEY` is missing or the model call fails, onboarding falls back to a local default guide so Firebase persistence can still be exercised.

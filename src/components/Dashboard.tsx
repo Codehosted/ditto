@@ -34,7 +34,6 @@ import NextStepsView from "./NextStepsView";
 import DocumentMap from "./DocumentMap";
 import Obituary from "./Obituary";
 import { useFirebase } from "./FirebaseProvider";
-import { auth, signOut } from "../firebase";
 
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -59,7 +58,7 @@ const DashboardCard = ({ children, className = "", onClick }: { children: React.
 export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void }) {
   const [activeTab, setActiveTab] = useState("overview");
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const { user, profile, familyData, tasks, documents } = useFirebase();
+  const { user, profile, familyData, tasks, documents, signOutUser } = useFirebase();
 
   // Unified timeline schema stub
   const timelineEvents = [
@@ -102,6 +101,7 @@ export default function Dashboard({ onLogoClick }: { onLogoClick?: () => void })
   ];
 
   const handleLogout = async () => {
+    await signOutUser();
     if (onLogoClick) onLogoClick();
   };
 

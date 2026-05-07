@@ -25,7 +25,6 @@ import {
   Globe
 } from "lucide-react";
 import { useFirebase } from "./FirebaseProvider";
-import { auth } from "../firebase";
 
 // Mock data for Insurance Search
 const MOCK_POLICIES = [
@@ -35,14 +34,14 @@ const MOCK_POLICIES = [
 ];
 
 export default function FuneralHomePortal() {
-  const { profile, user } = useFirebase();
+  const { profile, user, signOutUser } = useFirebase();
   const [activeTab, setActiveTab] = useState("dashboard");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<any[]>([]);
 
   const handleLogout = async () => {
-    window.location.reload();
+    await signOutUser();
   };
 
   const handleInsuranceSearch = async (e: React.FormEvent) => {

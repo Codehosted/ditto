@@ -10,6 +10,8 @@ import {
   Lock,
   ArrowRight
 } from "lucide-react";
+import { useFirebase } from "./FirebaseProvider";
+import { db, collection, addDoc, Timestamp } from "../firebase";
 
 const TIERS = [
   {
@@ -61,14 +63,31 @@ const TIERS = [
 
 export default function Subscription() {
   const [loading, setLoading] = useState<string | null>(null);
+  const [status, setStatus] = useState("");
+  const { user, profile, familyData, ensureSignedIn } = useFirebase();
 
-  const handleSubscribe = (tierId: string) => {
+  const handleSubscribe = async (tierId: string) => {
     setLoading(tierId);
-    // Simulate Stripe Checkout
-    setTimeout(() => {
-      alert("Redirecting to Stripe Checkout for " + tierId);
+    setStatus("");
+    try {
+      const signedInUser = await ensureSignedIn();
+      const tier = TIERS.find((item) => item.id === tierId);
+      await addDoc(collection(db, "checkoutRequests"), {
+        uid: signedInUser.uid,
+        email: signedInUser.email || profile?.email || `guest-${signedInUser.uid}@ditto.local`,
+        familyId: familyData?.id || null,
+        tierId,
+        amount: tier?.price || "0.00",
+        status: "pending",
+        createdAt: Timestamp.now(),
+      });
+      setStatus("Checkout request saved. A Firebase backend can now process this tier.");
+    } catch (error) {
+      console.error("Failed to create checkout request", error);
+      setStatus("Unable to create checkout request. Please try again.");
+    } finally {
       setLoading(null);
-    }, 1500);
+    }
   };
 
   return (
@@ -137,6 +156,10 @@ export default function Subscription() {
             </motion.div>
           ))}
         </div>
+
+        {status && (
+          <p className="mt-8 text-center text-sm text-stone-500 font-light">{status}</p>
+        )}
 
         {/* Security & Trust */}
         <div className="mt-20 flex flex-wrap justify-center gap-12 items-center opacity-50 grayscale">

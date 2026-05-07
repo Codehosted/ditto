@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ArrowLeft, ArrowRight, Check, Info, Upload } from "lucide-react";
-import { db, auth, addDoc, collection, Timestamp, updateDoc, doc } from "../firebase";
+import { ArrowLeft, ArrowRight, Check, Upload } from "lucide-react";
+import { db, doc, setDoc, Timestamp } from "../firebase";
 import { useFirebase } from "./FirebaseProvider";
 import { generateNextStepsAndDocs, findLocalBusinesses } from "../services/aiService";
 
@@ -104,6 +104,139 @@ const STEPS = [
   }
 ];
 
+const DEFAULT_NEXT_STEPS = {
+  nextSteps: {
+    immediateActions: [
+      "Contact a funeral home or coroner if that has not already happened.",
+      "Notify close family members and identify the primary point of contact.",
+      "Locate identification, insurance documents, and any pre-arrangement records.",
+    ],
+    shortTermActions: [
+      "Request certified death certificates through the funeral home or local vital records office.",
+      "Confirm service preferences and coordinate with selected vendors.",
+      "Begin notifying Social Security, employers, banks, and insurers.",
+    ],
+    longTermActions: [
+      "Organize estate documents and contact the estate attorney or probate court if needed.",
+      "Submit insurance claims and track benefit decisions.",
+      "Archive important documents in the family vault for future reference.",
+    ],
+  },
+  requiredDocuments: [
+    {
+      documentName: "Death Certificate",
+      description: "Certified copies are usually needed for benefits, banking, insurance, and estate tasks.",
+      obtainingGuidance: "The funeral home can usually request certified copies, or you can contact the local county or state vital records office.",
+    },
+    {
+      documentName: "Will or Trust Documents",
+      description: "Estate planning records determine who can act on behalf of the estate.",
+      obtainingGuidance: "Check home files, safe deposit boxes, attorney offices, and county probate records.",
+    },
+  ],
+};
+
+const DEFAULT_BUSINESSES = [
+  {
+    category: "funeral_home",
+    name: "Grace Memorial Chapel",
+    address: "123 Serenity Ln, Springfield",
+    rating: 4.9,
+    phoneNumber: "(555) 010-1221",
+    websiteUrl: "https://example.com/grace-memorial",
+  },
+  {
+    category: "flowers",
+    name: "Bloom & Petal",
+    address: "789 Flower St, Springfield",
+    rating: 4.8,
+    phoneNumber: "(555) 010-4432",
+    websiteUrl: "https://example.com/bloom-petal",
+  },
+  {
+    category: "cemetery",
+    name: "Evergreen Cemetery",
+    address: "456 Peace Way, Springfield",
+    rating: 4.7,
+    phoneNumber: "(555) 010-7788",
+    websiteUrl: "https://example.com/evergreen",
+  },
+];
+
+function docIdFrom(value: string, fallback: string) {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80);
+  return slug || fallback;
+}
+
+function iconForCategory(category: string) {
+  const normalized = category.toLowerCase();
+  if (normalized.includes("flower")) return "Flower2";
+  if (normalized.includes("funeral")) return "Building2";
+  if (normalized.includes("church")) return "Music";
+  if (normalized.includes("cemetery")) return "Building2";
+  if (normalized.includes("casket")) return "Truck";
+  return "Truck";
+}
+
+function flattenGeneratedTasks(nextSteps: any) {
+  const groups = [
+    { key: "immediateActions", label: "Immediate", days: 1 },
+    { key: "shortTermActions", label: "Short-term", days: 7 },
+    { key: "longTermActions", label: "Long-term", days: 30 },
+  ];
+
+  return groups.flatMap((group) => {
+    const actions = nextSteps?.nextSteps?.[group.key];
+    if (!Array.isArray(actions)) return [];
+    return actions.map((title: string, index: number) => ({
+      id: docIdFrom(`${group.key}-${title}`, `${group.key}-${index}`),
+      data: {
+        title,
+        description: `${group.label} guidance generated during onboarding.`,
+        status: "pending",
+        category: group.label,
+        dueDate: Timestamp.fromDate(new Date(Date.now() + group.days * 86400000)),
+        createdAt: Timestamp.now(),
+      },
+    }));
+  });
+}
+
+async function seedFamilyCollections(familyId: string, nextSteps: any, businesses: any[]) {
+  const taskWrites = flattenGeneratedTasks(nextSteps).map(({ id, data }) =>
+    setDoc(doc(db, "families", familyId, "tasks", id), data, { merge: true })
+  );
+
+  const vendorWrites = businesses.slice(0, 8).map((business, index) => {
+    const category = String(business.category || business.type || "vendor");
+    const name = String(business.name || `Provider ${index + 1}`);
+    return setDoc(doc(db, "families", familyId, "vendors", docIdFrom(`${category}-${name}`, `provider-${index}`)), {
+      name,
+      type: category.replace(/_/g, " "),
+      category,
+      status: index === 0 ? "action_required" : "coordinating",
+      address: business.address || "",
+      phone: business.phoneNumber || business.phone || "",
+      website: business.websiteUrl || business.website || "",
+      rating: typeof business.rating === "number" ? business.rating : null,
+      amenities: Array.isArray(business.amenities) ? business.amenities : [],
+      icon: iconForCategory(category),
+      lastAction: index === 0
+        ? "Provider details are ready for family review."
+        : "Ditto is tracking this provider as a local option.",
+      source: "onboarding",
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+    }, { merge: true });
+  });
+
+  await Promise.all([...taskWrites, ...vendorWrites]);
+}
+
 export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete: () => void; onExit: () => void; onLogin?: () => void }) {
   const [currentStep, setCurrentStep] = useState(0);
   const [data, setData] = useState<OnboardingData>({
@@ -130,7 +263,7 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
     repastSite: "Community Center",
   });
   const [checklist, setChecklist] = useState<Record<string, boolean>>({});
-  const { user, profile, setAppFamilyData } = useFirebase();
+  const { user, profile, setAppFamilyData, ensureSignedIn } = useFirebase();
   const [isSaving, setIsSaving] = useState(false);
   const [savingStatus, setSavingStatus] = useState("Finalizing your account...");
 
@@ -166,21 +299,20 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
     } else if (currentStep === STEPS.length - 1) {
       setIsSaving(true);
       try {
+        await ensureSignedIn();
         setSavingStatus("Generating personalized next steps and finding local businesses...");
         const location = { city: data.city, state: data.state, zipCode: data.zip };
         
-        // Generate AI content based on location
         const [aiSteps, aiBusinesses] = await Promise.all([
           generateNextStepsAndDocs(location).catch(e => { console.error(e); return null; }),
           findLocalBusinesses(location).catch(e => { console.error(e); return []; })
         ]);
 
-        if (aiSteps) {
-          localStorage.setItem('ditto_next_steps', JSON.stringify(aiSteps));
-        }
-        if (aiBusinesses && aiBusinesses.length > 0) {
-          localStorage.setItem('ditto_businesses', JSON.stringify(aiBusinesses));
-        }
+        const nextSteps = aiSteps || DEFAULT_NEXT_STEPS;
+        const businesses = aiBusinesses && aiBusinesses.length > 0 ? aiBusinesses : DEFAULT_BUSINESSES;
+
+        localStorage.setItem('ditto_next_steps', JSON.stringify(nextSteps));
+        localStorage.setItem('ditto_businesses', JSON.stringify(businesses));
         
         // Also save deceased info to local storage for the DevToolbar / Dashboard
         localStorage.setItem('ditto_deceased', JSON.stringify({
@@ -190,20 +322,38 @@ export default function Onboarding({ onComplete, onExit, onLogin }: { onComplete
           location: location
         }));
 
-        setAppFamilyData({
-          id: `ditto-${Date.now()}`,
+        setSavingStatus("Saving to Firebase...");
+        const savedFamily = await setAppFamilyData({
+          id: user?.uid ? `family-${user.uid}` : undefined,
+          profile: {
+            firstName: data.firstName,
+            lastName: data.lastName,
+            phone: data.phone,
+            address: data.address,
+            city: data.city,
+            state: data.state,
+            zip: data.zip,
+            role: data.role === "Funeral Home / Vendor" ? "vendor" : "member",
+          },
           deceased: { fullName: data.deceasedFullName },
           preferences: {
+            burialType: data.burialPreference,
             zip: data.zip,
             city: data.city,
+            state: data.state,
             funeralHome: data.funeralHome,
+            cemetery: data.cemetery,
+            church: data.church,
+            repastSite: data.repastSite,
           },
+          checklist,
+          nextSteps,
+          localBusinesses: businesses,
         });
 
-        setSavingStatus("Saving to database...");
-
-        // Mock a successful save with a small delay
-        await new Promise(resolve => setTimeout(resolve, 1500));
+        if (savedFamily?.id) {
+          await seedFamilyCollections(savedFamily.id, nextSteps, businesses);
+        }
 
         setCurrentStep(STEPS.length);
       } catch (error) {

@@ -15,7 +15,6 @@ import FAQ from "./components/FAQ";
 import SmartSearch from "./components/SmartSearch";
 import DevToolbar from "./components/DevToolbar";
 import { FirebaseProvider, ErrorBoundary, useFirebase } from "./components/FirebaseProvider";
-import { auth, googleProvider, signInWithPopup, signOut } from "./firebase";
 
 const FadeIn = ({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) => (
   <motion.div
@@ -41,7 +40,7 @@ export default function App() {
 
 function AppContent() {
   const [view, setView] = useState<"landing" | "onboarding" | "dashboard" | "vendor-portal">("landing");
-  const { user, profile, loading, familyData } = useFirebase();
+  const { user, profile, loading, familyData, signInWithGoogle, signInAsGuest, signOutUser } = useFirebase();
 
   useEffect(() => {
     if (user && profile?.role === "vendor" && view !== "vendor-portal") {
@@ -57,10 +56,17 @@ function AppContent() {
   const handleVendorPortal = () => setView("vendor-portal");
 
   const handleLogin = async () => {
+    try {
+      await signInWithGoogle();
+    } catch (error) {
+      console.warn("Google sign-in failed, continuing as guest.", error);
+      await signInAsGuest();
+    }
     setView("dashboard");
   };
 
   const handleLogout = async () => {
+    await signOutUser();
     setView("landing");
   };
 

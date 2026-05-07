@@ -1,13 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { CheckCircle2, FileText, MapPin, Star, ExternalLink, Clock, AlertCircle, Phone } from 'lucide-react';
+import { useFirebase } from './FirebaseProvider';
 
 export default function NextStepsView() {
+  const { familyData } = useFirebase();
   const [nextSteps, setNextSteps] = useState<any>(null);
   const [businesses, setBusinesses] = useState<any[]>([]);
   const [deceased, setDeceased] = useState<any>(null);
 
   useEffect(() => {
+    if (familyData?.nextSteps) {
+      setNextSteps(familyData.nextSteps);
+      setBusinesses(Array.isArray(familyData.localBusinesses) ? familyData.localBusinesses : []);
+      setDeceased({
+        firstName: familyData.deceased?.fullName?.split(' ')?.[0],
+        location: {
+          city: familyData.preferences?.city,
+          state: familyData.preferences?.state,
+        },
+      });
+      return;
+    }
+
     try {
       const storedSteps = localStorage.getItem('ditto_next_steps');
       const storedBusinesses = localStorage.getItem('ditto_businesses');
@@ -19,7 +34,7 @@ export default function NextStepsView() {
     } catch (e) {
       console.error("Failed to load AI generated data", e);
     }
-  }, []);
+  }, [familyData]);
 
   if (!nextSteps) {
     return (

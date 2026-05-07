@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Search, X, Filter, MapPin, Star, Clock, ChevronRight } from "lucide-react";
+import { db, collection, onSnapshot, query } from "../firebase";
 
 interface Suggestion {
   id: string;
@@ -36,12 +37,38 @@ export default function SmartSearch() {
   const [showFilters, setShowFilters] = useState(false);
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
   const [results, setResults] = useState<Vendor[]>([]);
+  const [directoryVendors, setDirectoryVendors] = useState<Vendor[]>(VENDORS);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
   const currentAmenities = query.toLowerCase().includes("funeral home") 
     ? FUNERAL_HOME_AMENITIES 
     : DEFAULT_AMENITIES;
+
+  useEffect(() => {
+    const unsubscribe = onSnapshot(query(collection(db, "vendors")), (snapshot) => {
+      const firebaseVendors = snapshot.docs.map((item) => {
+        const data = item.data();
+        return {
+          id: item.id,
+          name: String(data.name || "Unnamed provider"),
+          category: String(data.category || data.type || "Service Provider"),
+          rating: typeof data.rating === "number" ? data.rating : 0,
+          distance: String(data.distance || "Nearby"),
+          amenities: Array.isArray(data.amenities) ? data.amenities : [],
+          address: String(data.address || ""),
+        };
+      });
+
+      if (firebaseVendors.length > 0) {
+        setDirectoryVendors(firebaseVendors);
+      }
+    }, () => {
+      setDirectoryVendors(VENDORS);
+    });
+
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -70,7 +97,7 @@ export default function SmartSearch() {
   }, [query]);
 
   const handleSearch = () => {
-    let filtered = VENDORS.filter(v => 
+    let filtered = directoryVendors.filter(v => 
       v.name.toLowerCase().includes(query.toLowerCase()) || 
       v.category.toLowerCase().includes(query.toLowerCase())
     );

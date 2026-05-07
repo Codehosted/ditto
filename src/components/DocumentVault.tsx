@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   FileText, 
@@ -30,7 +30,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { useFirebase } from "./FirebaseProvider";
-import { db, collection, addDoc, Timestamp, OperationType, handleFirestoreError, updateDoc, doc } from "../firebase";
+import { db, storage, storageRef, uploadBytes, getDownloadURL, collection, addDoc, Timestamp, OperationType, handleFirestoreError } from "../firebase";
 import { generateAccessKey, hashKey, verifyKey } from "../services/encryptionService";
 import { sendSignatureRequest } from "../services/signatureService";
 
@@ -45,7 +45,7 @@ const CATEGORIES = [
 ];
 
 export default function DocumentVault() {
-  const { documents, familyData, user } = useFirebase();
+  const { documents, familyData, user, profile, ensureSignedIn } = useFirebase();
   const [activeCategory, setActiveCategory] = useState("all");
   const [isDragging, setIsDragging] = useState(false);
   const [showUploadSuccess, setShowUploadSuccess] = useState(false);
@@ -57,6 +57,7 @@ export default function DocumentVault() {
   const [unlockingDocId, setUnlockingDocId] = useState<string | null>(null);
   const [accessKeyInput, setAccessKeyInput] = useState("");
   const [unlockError, setUnlockError] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -73,20 +74,30 @@ export default function DocumentVault() {
     
     setIsUploading(true);
     try {
+      const signedInUser = await ensureSignedIn();
       let lastKey = null;
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const key = isSecure ? generateAccessKey() : null;
         lastKey = key;
+        const storagePath = `families/${familyData.id}/documents/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const fileRef = storageRef(storage, storagePath);
+        await uploadBytes(fileRef, file, { contentType: file.type || "application/octet-stream" });
+        const url = await getDownloadURL(fileRef);
 
         const docData: any = {
+          title: file.name,
           name: file.name,
           category: activeCategory === "all" ? "personal" : activeCategory,
+          url,
+          storagePath,
           size: `${(file.size / 1024 / 1024).toFixed(1)} MB`,
-          uploadedBy: user?.displayName || "Unknown",
-          uploadedByUid: user?.uid,
+          contentType: file.type || "application/octet-stream",
+          uploadedBy: signedInUser.uid,
+          uploadedByName: signedInUser.displayName || profile?.firstName || "You",
+          uploadedByUid: signedInUser.uid,
           createdAt: Timestamp.now(),
-          sharedWith: [user?.displayName || "You"],
+          sharedWith: [signedInUser.displayName || profile?.firstName || "You"],
           isEncrypted: isSecure,
           signatureStatus: 'none'
         };
@@ -117,7 +128,7 @@ export default function DocumentVault() {
     e.preventDefault();
     setIsDragging(false);
     handleUpload(e.dataTransfer.files);
-  }, [familyData, user, activeCategory]);
+  }, [familyData, user, activeCategory, isSecure]);
 
   const filteredDocs = activeCategory === "all" 
     ? documents 
@@ -183,6 +194,7 @@ export default function DocumentVault() {
         onDragOver={onDragOver}
         onDragLeave={onDragLeave}
         onDrop={onDrop}
+        onClick={() => fileInputRef.current?.click()}
         className={`
           relative border-2 border-dashed rounded-3xl p-12 transition-all flex flex-col items-center justify-center text-center space-y-4
           ${isDragging 
@@ -191,6 +203,16 @@ export default function DocumentVault() {
           }
         `}
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            void handleUpload(event.target.files);
+            event.currentTarget.value = "";
+          }}
+        />
         <div className="w-16 h-16 rounded-full bg-stone-50 flex items-center justify-center text-stone-300">
           <Upload size={32} strokeWidth={1} />
         </div>
@@ -260,7 +282,7 @@ export default function DocumentVault() {
 
               <div className="space-y-1 mb-6">
                 <h5 className="font-medium text-stone-900 truncate pr-4">
-                  {doc.isEncrypted ? "••••••••••••" : doc.name}
+                  {doc.isEncrypted ? "••••••••••••" : doc.title || doc.name}
                 </h5>
                 <div className="flex items-center gap-2 text-[10px] text-stone-400 uppercase tracking-wider">
                   <span>{doc.category}</span>
@@ -298,8 +320,8 @@ export default function DocumentVault() {
                           await sendSignatureRequest({
                             documentId: doc.id,
                             familyId: familyData.id,
-                            signerEmail: user?.email || "",
-                            signerName: user?.displayName || "Family Member"
+                            signerEmail: user?.email || profile?.email || (user ? `guest-${user.uid}@ditto.local` : ""),
+                            signerName: user?.displayName || profile?.firstName || "Family Member"
                           });
                         }}
                         className="p-2 text-stone-400 hover:text-blue-600 transition-colors" 
@@ -307,10 +329,10 @@ export default function DocumentVault() {
                       >
                         <PenTool size={16} />
                       </button>
-                      <button className="p-2 text-stone-400 hover:text-stone-900 transition-colors" title="View">
+                      <button onClick={() => doc.url && window.open(doc.url, "_blank")} className="p-2 text-stone-400 hover:text-stone-900 transition-colors" title="View">
                         <Eye size={16} />
                       </button>
-                      <button className="p-2 text-stone-400 hover:text-stone-900 transition-colors" title="Download">
+                      <button onClick={() => doc.url && window.open(doc.url, "_blank")} className="p-2 text-stone-400 hover:text-stone-900 transition-colors" title="Download">
                         <Download size={16} />
                       </button>
                     </>
