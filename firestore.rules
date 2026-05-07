@@ -151,16 +151,6 @@ service cloud.firestore {
              (!('metadata' in data) || data.metadata is map);
     }
 
-    function isValidUploadedDocument(data) {
-      return data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.category is string &&
-             data.url is string && isValidUrl(data.url) &&
-             data.storagePath is string &&
-             data.uploadedBy is string && data.uploadedBy == request.auth.uid &&
-             data.uploadedByUid is string && data.uploadedByUid == request.auth.uid &&
-             data.createdAt is timestamp;
-    }
-
     function isValidMeeting(data) {
       return hasOnlyAllowedFields(['familyId', 'vendorId', 'provider', 'meetingUrl', 'startTime', 'topic', 'status', 'createdAt']) &&
              data.familyId is string &&
