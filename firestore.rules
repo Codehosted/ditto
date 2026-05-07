@@ -257,7 +257,9 @@ service cloud.firestore {
 
     match /families/{familyId}/documents/{docId} {
       allow read: if canAccessFamily(familyId);
-      allow create: if canAccessFamily(familyId) && isValidUploadedDocument(request.resource.data);
+      allow create: if isAuthenticated() &&
+                    request.resource.data.uploadedBy == request.auth.uid &&
+                    request.resource.data.uploadedByUid == request.auth.uid;
       allow update: if canAccessFamily(familyId) && isValidDocument(request.resource.data);
       allow delete: if canAccessFamily(familyId);
     }
