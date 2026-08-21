@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 
-import { requireIdentity, type Identity } from "./_lib/auth";
-import { db } from "./_lib/db";
-import { parseCollectionPath, parseDocumentData, parseDocumentPath, type DocumentPath } from "./_lib/documents";
-import { HttpError } from "./_lib/errors";
+import { requireIdentity, type Identity } from "./_lib/auth.js";
+import { db } from "./_lib/db.js";
+import { parseCollectionPath, parseDocumentData, parseDocumentPath, type DocumentPath } from "./_lib/documents.js";
+import { HttpError } from "./_lib/errors.js";
 
 type RequestLike = {
   method?: string;
