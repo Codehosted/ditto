@@ -1,4 +1,4 @@
-import { HttpError } from "./errors";
+import { HttpError } from "./errors.js";
 
 const maxPathSegments = 8;
 const maxSegmentLength = 200;
