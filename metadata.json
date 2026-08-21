@@ -1,5 +1,7 @@
 {
-  "name": "Remix: Ditto",
-  "description": "Let\u0027s start with all of the existing app features, functionality, etc. \n\n\nafter a user submits the information for the deceased individual you should do a web search to demystify the next steps for them.\n\nfor each required document - provide guidance for how they will obtain these documents based on the information provided such as geography (state, city, zip, county, etc.)\n\nprovide real google business references for the following respective things: flowers, funeral home, cemetery, church, casket companies. each one of these objects presents a \"check list item\" so various google business can be be provider or facilitator of each step.\n\nfor the homepage search results - do not show results for individual business entities, but rather suggested packages.\n\nbefore making code changes you shall generate JSON schemas that represent each aspect of the app. We must agree on the schemas prior to implementing code changes. \n\n- code style\n-- components should follow DI pattern when possible\n-- there should be a clear separation of concerns between data and visual components\n\n- style/design\n-- use shadcn / reui components for components\n\n",
-  "requestFramePermissions": []
+  "name": "Ditto",
+  "description": "A secure, dignified platform for families and funeral homes to collaborate on after-life care logistics, featuring encrypted document management, digital signatures, integrated video consultations, and local travel assistance for visiting family.",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }
