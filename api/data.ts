@@ -302,6 +302,10 @@ async function handleDataRequest(body: RequestBody, identity: Identity) {
   if (operation === "delete") {
     await authorizeDocument(operation, target, identity, undefined, existing);
     if (existing) {
+      if (target.segments[0] === "families" && target.segments.length === 2) {
+        await db()`DELETE FROM ditto_documents WHERE document_path LIKE ${`${target.path}/%`}`;
+        await db()`DELETE FROM ditto_family_members WHERE family_id = ${target.id}`;
+      }
       await db()`DELETE FROM ditto_documents WHERE document_path = ${target.path}`;
     }
     return { deleted: Boolean(existing) };
