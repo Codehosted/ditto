@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 
-import { HttpError } from "./errors";
+import { HttpError } from "./errors.js";
 
 const defaultProjectId = "gen-lang-client-0065789810";
 const jwks = createRemoteJWKSet(
