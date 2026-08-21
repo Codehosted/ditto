@@ -81,7 +81,7 @@ export default function Subscription() {
         status: "pending",
         createdAt: Timestamp.now(),
       });
-      setStatus("Checkout request saved. A Firebase backend can now process this tier.");
+      setStatus("Checkout request saved. The Ditto backend can now process this tier.");
     } catch (error) {
       console.error("Failed to create checkout request", error);
       setStatus("Unable to create checkout request. Please try again.");

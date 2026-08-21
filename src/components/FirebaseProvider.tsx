@@ -13,6 +13,7 @@ import {
   signInWithPopup,
   signOut,
   googleProvider,
+  migrateLegacyFirestoreData,
   Timestamp,
   type FirebaseUser,
 } from '../firebase';
@@ -108,7 +109,11 @@ function defaultFamilyPayload(profile: AppProfile | null, user: FirebaseUser) {
 
 async function ensureUserProfile(user: FirebaseUser): Promise<AppProfile> {
   const userRef = doc(db, 'users', user.uid);
-  const snap = await getDoc(userRef);
+  let snap = await getDoc(userRef);
+  if (!snap.exists()) {
+    await migrateLegacyFirestoreData(user);
+    snap = await getDoc(userRef);
+  }
   const existing = snap.exists() ? ({ id: snap.id, ...snap.data() } as AppProfile) : null;
 
   const payload = compactObject({

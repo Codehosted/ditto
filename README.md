@@ -1,37 +1,30 @@
 # Ditto
 
-Firebase-backed Vite/React prototype for family onboarding, generated next steps, document storage, vendor coordination, invitations, and checkout requests.
+Ditto helps families and funeral homes coordinate after-life care logistics, including onboarding guidance, family tasks, document storage, vendor coordination, invitations, and checkout requests.
 
-## Run Locally
+## Runtime architecture
 
-1. Install dependencies:
-   `bun install`
-2. Create `.env.local` from `.env.example` and set `GEMINI_API_KEY`.
-3. Run the app:
-   `bun run dev`
+- **Firebase Auth** handles Google and guest identity.
+- **Firebase Storage** holds uploaded document files.
+- **Vercel API routes** verify Firebase ID tokens and persist application records in PostgreSQL.
+- Production PostgreSQL runs in Ditto's isolated container on the Codehosted DigitalOcean database host, reached through TLS-only PgBouncer at `postgres.codehosted.com:6432/ditto`.
+- On the first sign-in after cutover, owned legacy Firestore profile and family records are copied into PostgreSQL; subsequent application reads and writes use the Vercel API.
 
-## Firebase Setup
+## Run locally
 
-The app reads Firebase config from `firebase-applet-config.json`.
+1. `bun install`
+2. Copy `.env.example` to `.env.local` and set `GEMINI_API_KEY`.
+3. Set `DATABASE_URL` to a PostgreSQL database with `database/schema.sql` applied.
+4. Run `bun run dev`.
 
-Enable these Firebase products for full local use:
+The custom Bun development server serves the Vite app only. Use `vercel dev` when you need to exercise `/api/data` locally.
 
-- Authentication: Google sign-in and Anonymous sign-in.
-- Firestore: deploy `firestore.rules`.
-- Storage: deploy `storage.rules`.
+## Production database rollout
 
-Runtime data now lives in Firestore:
+1. Provision the isolated `postgres-ditto` container via `infra-automation/shared-postgres`.
+2. Migrate the old `app_snapshots` data with `DITTO_SOURCE_DATABASE_URL=... ./shared-postgres/scripts/migrate-database.sh ditto`.
+3. Apply `database/schema.sql` to the Ditto target database.
+4. Set Vercel Production `DATABASE_URL` to the generated `DITTO_DATABASE_URL` and set `FIREBASE_PROJECT_ID=gen-lang-client-0065789810`.
+5. Deploy, then verify `/api/health` and a signed-in read/write path.
 
-- `users/{uid}`
-- `families/{familyId}`
-- `families/{familyId}/tasks`
-- `families/{familyId}/documents`
-- `families/{familyId}/vendors`
-- `invitations`
-- `checkoutRequests`
-
-Uploaded files are stored in Firebase Storage under `families/{familyId}/documents/...`.
-
-## Notes
-
-Gemini powers onboarding guide generation and Clara chat. If `GEMINI_API_KEY` is missing or the model call fails, onboarding falls back to a local default guide so Firebase persistence can still be exercised.
+Keep the old Neon database unchanged until the production observation window confirms the cutover.
