@@ -5,9 +5,8 @@ import { requireMcpToken, sha256 } from "../api/_lib/mcp-auth.js";
 import {
   callDittoMcpTool,
   handleMcpRequest,
-  maxMcpDocumentChunkBytes,
-  maxMcpDocumentResultBytes,
-  maxMcpListResultBytes,
+  maxMcpDocumentDataBytes,
+  maxMcpUpsertDataBytes,
   type DittoMcpStore,
   type McpDocument,
 } from "../api/_lib/mcp.js";
@@ -19,6 +18,7 @@ function document(path: string, data: Record<string, unknown> = {}): McpDocument
     id: path.split("/").at(-1)!,
     path,
     data,
+    dataBytes: Buffer.byteLength(JSON.stringify(data), "utf8"),
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   };
@@ -26,22 +26,29 @@ function document(path: string, data: Record<string, unknown> = {}): McpDocument
 
 function fakeStore(seed: McpDocument[] = []) {
   const documents = new Map(seed.map((item) => [item.path, item]));
+  const metadata = (item: McpDocument): McpDocument => {
+    const { data: _data, ...rest } = item;
+    return { ...rest, dataOmitted: true };
+  };
   const store: DittoMcpStore = {
     async health() {},
     async list(collectionPath, limit, afterDocumentId) {
       return [...documents.values()]
         .filter((item) => item.path.split("/").slice(0, -1).join("/") === collectionPath && (!afterDocumentId || item.id > afterDocumentId))
         .sort((a, b) => a.id.localeCompare(b.id))
-        .slice(0, limit);
+        .slice(0, limit)
+        .map(metadata);
     },
     async get(path) {
-      return documents.get(path) ?? null;
+      const item = documents.get(path);
+      if (!item) return null;
+      return item.dataBytes <= maxMcpDocumentDataBytes ? item : metadata(item);
     },
     async upsert(target: DocumentPath, data) {
       const existing = documents.get(target.path);
       const next = document(target.path, { ...existing?.data, ...data });
       documents.set(target.path, next);
-      return next;
+      return metadata(next);
     },
   };
   return { store, documents };
@@ -128,32 +135,24 @@ describe("Ditto MCP tools", () => {
   test("lists approved documents with bounded pagination", async () => {
     const { store } = fakeStore([document("families/a"), document("families/b"), document("users/u")]);
     const result = await callDittoMcpTool("ditto_documents_list", { collection: "families", limit: 1 }, store);
-    expect(result).toEqual({ documents: [document("families/a")], nextAfterDocumentId: "a" });
+    expect(result).toMatchObject({
+      documents: [{ id: "a", path: "families/a", dataOmitted: true }],
+      nextAfterDocumentId: "a",
+    });
   });
 
-  test("paginates before the aggregate serialized list exceeds its byte budget", async () => {
+  test("lists metadata without fetching or returning document data", async () => {
     const { store } = fakeStore([
-      document("families/a", { notes: "a".repeat(600_000) }),
-      document("families/b", { notes: "b".repeat(600_000) }),
+      document("families/a", { notes: "a".repeat(900_000) }),
+      document("families/b", { notes: "b".repeat(900_000) }),
     ]);
     const result = await callDittoMcpTool("ditto_documents_list", { collection: "families", limit: 2 }, store) as {
       documents: McpDocument[];
       nextAfterDocumentId: string | null;
     };
-    expect(result.documents.map(({ id }) => id)).toEqual(["a"]);
-    expect(result.nextAfterDocumentId).toBe("a");
-    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(maxMcpListResultBytes);
-  });
-
-  test("returns metadata instead of oversized data so pagination can advance", async () => {
-    const { store } = fakeStore([document("families/a", { notes: "🙂".repeat(400_000) })]);
-    const result = await callDittoMcpTool("ditto_documents_list", { collection: "families", limit: 2 }, store) as {
-      documents: Array<{ id: string; path: string; data?: unknown; dataOmitted?: boolean }>;
-    };
-    expect(result.documents).toHaveLength(1);
-    expect(result.documents[0]).toMatchObject({ id: "a", path: "families/a", dataOmitted: true });
-    expect(result.documents[0].data).toBeUndefined();
-    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(maxMcpListResultBytes);
+    expect(result.documents.map(({ id }) => id)).toEqual(["a", "b"]);
+    expect(result.documents.every(({ data, dataOmitted }) => data === undefined && dataOmitted)).toBeTrue();
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(10_000);
   });
 
   test("reads an approved document", async () => {
@@ -162,37 +161,29 @@ describe("Ditto MCP tools", () => {
     expect(await callDittoMcpTool("ditto_document_get", { path: expected.path }, store)).toEqual({ document: expected });
   });
 
-  test("returns oversized document data in bounded resumable chunks", async () => {
+  test("omits oversized document data from get responses", async () => {
     const expected = document("families/family-1/documents/document-1", { notes: "🙂".repeat(400_000) });
     const { store } = fakeStore([expected]);
-    const chunks: Buffer[] = [];
-    let offset: number | null = 0;
-
-    while (offset !== null) {
-      const result = await callDittoMcpTool("ditto_document_get", {
-        path: expected.path,
-        dataOffsetBytes: offset,
-      }, store) as {
-        document: { path: string; data?: unknown; dataOmitted: true; dataBytes: number };
-        dataChunk: { encoding: "base64"; lengthBytes: number; value: string; nextOffsetBytes: number | null };
-      };
-      expect(result.document).toMatchObject({ path: expected.path, dataOmitted: true });
-      expect(result.document.data).toBeUndefined();
-      expect(result.dataChunk.encoding).toBe("base64");
-      expect(result.dataChunk.lengthBytes).toBeLessThanOrEqual(maxMcpDocumentChunkBytes);
-      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(maxMcpDocumentResultBytes);
-      chunks.push(Buffer.from(result.dataChunk.value, "base64"));
-      offset = result.dataChunk.nextOffsetBytes;
-    }
-
-    expect(Buffer.concat(chunks).toString("utf8")).toBe(JSON.stringify(expected.data));
+    const result = await callDittoMcpTool("ditto_document_get", { path: expected.path }, store) as { document: McpDocument };
+    expect(result.document).toMatchObject({ path: expected.path, dataOmitted: true, dataBytes: expected.dataBytes });
+    expect(result.document.data).toBeUndefined();
+    expect(result.document.dataBytes).toBeGreaterThan(maxMcpDocumentDataBytes);
   });
 
   test("merges approved writes", async () => {
     const original = document("families/family-1/tasks/task-1", { title: "Call director", done: false });
     const { store, documents } = fakeStore([original]);
-    await callDittoMcpTool("ditto_document_upsert", { path: original.path, data: { done: true } }, store);
+    const result = await callDittoMcpTool("ditto_document_upsert", { path: original.path, data: { done: true } }, store) as { document: McpDocument };
     expect(documents.get(original.path)?.data).toEqual({ title: "Call director", done: true });
+    expect(result.document).toMatchObject({ path: original.path, dataOmitted: true });
+    expect(result.document.data).toBeUndefined();
+  });
+
+  test("rejects MCP writes above the UTF-8 byte limit before mutation", async () => {
+    const { store, documents } = fakeStore();
+    const data = { notes: "🙂".repeat(Math.floor(maxMcpUpsertDataBytes * 0.3)) };
+    await expect(callDittoMcpTool("ditto_document_upsert", { path: "families/family-1/tasks/task-1", data }, store)).rejects.toThrow("write limit");
+    expect(documents.size).toBe(0);
   });
 
   test("keeps user profiles and audit logs read-only", async () => {

@@ -26,14 +26,15 @@ const writeRoots = new Set([
   "signatureRequests",
 ]);
 const familySubcollections = new Set(["tasks", "documents", "vendors"]);
-export const maxMcpListResultBytes = 1_000_000;
-export const maxMcpDocumentResultBytes = 1_000_000;
-export const maxMcpDocumentChunkBytes = 250_000;
+export const maxMcpDocumentDataBytes = 750_000;
+export const maxMcpUpsertDataBytes = 1_000_000;
 
 export type McpDocument = {
   id: string;
   path: string;
-  data: Record<string, unknown>;
+  data?: Record<string, unknown>;
+  dataBytes: number;
+  dataOmitted?: true;
   createdAt: string;
   updatedAt: string;
 };
@@ -42,7 +43,8 @@ type StoredDocument = {
   document_path: string;
   collection_path: string;
   document_id: string;
-  data: Record<string, unknown>;
+  data?: Record<string, unknown> | null;
+  data_bytes: number;
   created_at: Date;
   updated_at: Date;
 };
@@ -62,13 +64,14 @@ type JsonRpcRequest = {
 };
 
 function documentForClient(row: StoredDocument): McpDocument {
-  return {
+  const metadata = {
     id: row.document_id,
     path: row.document_path,
-    data: row.data,
+    dataBytes: Number(row.data_bytes),
     createdAt: new Date(row.created_at).toISOString(),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
+  return row.data ? { ...metadata, data: row.data } : { ...metadata, dataOmitted: true };
 }
 
 export const postgresMcpStore: DittoMcpStore = {
@@ -79,14 +82,16 @@ export const postgresMcpStore: DittoMcpStore = {
   async list(collectionPath, limit, afterDocumentId) {
     const rows = afterDocumentId
       ? await db()<StoredDocument[]>`
-          SELECT document_path, collection_path, document_id, data, created_at, updated_at
+          SELECT document_path, collection_path, document_id,
+            octet_length(data::text) AS data_bytes, created_at, updated_at
           FROM ditto_documents
           WHERE collection_path = ${collectionPath} AND document_id > ${afterDocumentId}
           ORDER BY document_id ASC
           LIMIT ${limit}
         `
       : await db()<StoredDocument[]>`
-          SELECT document_path, collection_path, document_id, data, created_at, updated_at
+          SELECT document_path, collection_path, document_id,
+            octet_length(data::text) AS data_bytes, created_at, updated_at
           FROM ditto_documents
           WHERE collection_path = ${collectionPath}
           ORDER BY document_id ASC
@@ -97,7 +102,9 @@ export const postgresMcpStore: DittoMcpStore = {
 
   async get(documentPath) {
     const [row] = await db()<StoredDocument[]>`
-      SELECT document_path, collection_path, document_id, data, created_at, updated_at
+      SELECT document_path, collection_path, document_id,
+        CASE WHEN octet_length(data::text) <= ${maxMcpDocumentDataBytes} THEN data ELSE NULL END AS data,
+        octet_length(data::text) AS data_bytes, created_at, updated_at
       FROM ditto_documents
       WHERE document_path = ${documentPath}
     `;
@@ -111,13 +118,14 @@ export const postgresMcpStore: DittoMcpStore = {
       ON CONFLICT (document_path) DO UPDATE SET
         data = ditto_documents.data || EXCLUDED.data,
         updated_at = now()
-      RETURNING document_path, collection_path, document_id, data, created_at, updated_at
+      RETURNING document_path, collection_path, document_id,
+        octet_length(data::text) AS data_bytes, created_at, updated_at
     `;
 
-    if (target.segments[0] === "families" && target.segments.length === 2 && typeof row.data.ownerId === "string") {
+    if (target.segments[0] === "families" && target.segments.length === 2 && typeof data.ownerId === "string") {
       await db()`
         INSERT INTO ditto_family_members (family_id, user_id)
-        VALUES (${target.id}, ${row.data.ownerId})
+        VALUES (${target.id}, ${data.ownerId})
         ON CONFLICT (family_id, user_id) DO NOTHING
       `;
     }
@@ -134,7 +142,7 @@ export const dittoMcpTools = [
   },
   {
     name: "ditto_documents_list",
-    description: "List documents in an approved Ditto collection, ordered by document ID. Oversized document data is omitted with a path for ditto_document_get.",
+    description: "List bounded document metadata in an approved Ditto collection, ordered by document ID. Use ditto_document_get for data.",
     inputSchema: {
       type: "object",
       properties: {
@@ -148,13 +156,11 @@ export const dittoMcpTools = [
   },
   {
     name: "ditto_document_get",
-    description: "Read one document from an approved Ditto path. Oversized data is returned as resumable base64-encoded JSON byte chunks.",
+    description: "Read one document from an approved Ditto path. Data over the safe response limit is omitted and reported with dataOmitted and dataBytes.",
     inputSchema: {
       type: "object",
       properties: {
         path: { type: "string", description: "Document path, such as families/FAMILY_ID." },
-        dataOffsetBytes: { type: "integer", minimum: 0, description: "Byte offset supplied by the previous oversized response." },
-        dataChunkBytes: { type: "integer", minimum: 1, maximum: maxMcpDocumentChunkBytes, default: maxMcpDocumentChunkBytes },
       },
       required: ["path"],
       additionalProperties: false,
@@ -162,7 +168,7 @@ export const dittoMcpTools = [
   },
   {
     name: "ditto_document_upsert",
-    description: "Create or merge fields into an approved Ditto document. Existing fields not supplied are preserved.",
+    description: "Create or merge bounded fields into an approved Ditto document. Returns metadata only; existing fields not supplied are preserved.",
     inputSchema: {
       type: "object",
       properties: {
@@ -221,72 +227,6 @@ function toolResult(result: unknown) {
   };
 }
 
-function boundedListResult(documents: McpDocument[], requestedLimit: number) {
-  const included: Array<McpDocument | Omit<McpDocument, "data"> & { dataOmitted: true; dataBytes: number }> = [];
-
-  for (const [index, document] of documents.entries()) {
-    const hasMore = index < documents.length - 1 || documents.length === requestedLimit;
-    const candidate = {
-      documents: [...included, document],
-      nextAfterDocumentId: hasMore ? document.id : null,
-    };
-    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= maxMcpListResultBytes) {
-      included.push(document);
-      continue;
-    }
-
-    if (included.length > 0) {
-      return { documents: included, nextAfterDocumentId: included.at(-1)!.id };
-    }
-
-    const { data, ...metadata } = document;
-    return {
-      documents: [{ ...metadata, dataOmitted: true as const, dataBytes: Buffer.byteLength(JSON.stringify(data), "utf8") }],
-      nextAfterDocumentId: hasMore ? document.id : null,
-    };
-  }
-
-  return {
-    documents: included,
-    nextAfterDocumentId: documents.length === requestedLimit ? documents.at(-1)?.id ?? null : null,
-  };
-}
-
-function boundedDocumentResult(document: McpDocument | null, dataOffsetBytes: number, dataChunkBytes: number) {
-  if (!document) return { document: null };
-
-  const fullResult = { document };
-  if (dataOffsetBytes === 0 && Buffer.byteLength(JSON.stringify(fullResult), "utf8") <= maxMcpDocumentResultBytes) {
-    return fullResult;
-  }
-
-  const encodedData = Buffer.from(JSON.stringify(document.data), "utf8");
-  if (dataOffsetBytes > encodedData.length) {
-    throw new HttpError(400, "Data offset exceeds the serialized document length");
-  }
-  const chunk = encodedData.subarray(dataOffsetBytes, dataOffsetBytes + dataChunkBytes);
-  const nextOffsetBytes = dataOffsetBytes + chunk.length;
-  const { data: _data, ...metadata } = document;
-  return {
-    document: { ...metadata, dataOmitted: true as const, dataBytes: encodedData.length },
-    dataChunk: {
-      encoding: "base64" as const,
-      offsetBytes: dataOffsetBytes,
-      lengthBytes: chunk.length,
-      value: chunk.toString("base64"),
-      nextOffsetBytes: nextOffsetBytes < encodedData.length ? nextOffsetBytes : null,
-    },
-  };
-}
-
-function boundedInteger(value: unknown, label: string, fallback: number, minimum: number, maximum = Number.MAX_SAFE_INTEGER) {
-  if (value === undefined) return fallback;
-  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
-    throw new HttpError(400, `${label} must be an integer from ${minimum} to ${maximum}`);
-  }
-  return value as number;
-}
-
 export async function callDittoMcpTool(name: string, input: unknown, store: DittoMcpStore = postgresMcpStore) {
   const args = objectArguments(input);
 
@@ -310,21 +250,25 @@ export async function callDittoMcpTool(name: string, input: unknown, store: Ditt
       }
       const afterDocumentId = optionalString(args.afterDocumentId, "After document ID");
       const documents = await store.list(collectionPath, limit as number, afterDocumentId);
-      return boundedListResult(documents, limit as number);
+      return {
+        documents,
+        nextAfterDocumentId: documents.length === limit ? documents.at(-1)?.id ?? null : null,
+      };
     }
 
     case "ditto_document_get": {
       const target = parseDocumentPath(args.path);
       assertRoot(target.path, false);
-      const dataOffsetBytes = boundedInteger(args.dataOffsetBytes, "Data offset", 0, 0);
-      const dataChunkBytes = boundedInteger(args.dataChunkBytes, "Data chunk size", maxMcpDocumentChunkBytes, 1, maxMcpDocumentChunkBytes);
-      return boundedDocumentResult(await store.get(target.path), dataOffsetBytes, dataChunkBytes);
+      return { document: await store.get(target.path) };
     }
 
     case "ditto_document_upsert": {
       const target = parseDocumentPath(args.path);
       assertRoot(target.path, true);
       const data = parseDocumentData(args.data);
+      if (Buffer.byteLength(JSON.stringify(data), "utf8") > maxMcpUpsertDataBytes) {
+        throw new HttpError(413, "Document data exceeds the MCP write limit");
+      }
       return { document: await store.upsert(target, data) };
     }
 
