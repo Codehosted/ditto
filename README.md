@@ -28,3 +28,17 @@ The custom Bun development server serves the Vite app only. Use `vercel dev` whe
 5. Deploy, then verify `/api/health` and a signed-in read/write path.
 
 Keep the old Neon database unchanged until the production observation window confirms the cutover.
+
+## Production agent MCP
+
+Ditto exposes a stateless MCP JSON-RPC endpoint at `POST /api/mcp`. It requires a dedicated bearer token and does not accept Firebase user sessions.
+
+Create a token without printing it to the terminal:
+
+```sh
+bun run mcp:token --output "$TMPDIR/ditto-agent-token"
+```
+
+The command writes the raw token to a new mode-`0600` file and prints only its SHA-256 digest. Set that digest as the Vercel secret `DITTO_MCP_TOKEN_SHA256`. Inject the token file directly into the assigned agent's secret store, then delete the temporary file. Do not put the raw token in Ditto's environment, source control, shell history, or logs.
+
+The endpoint provides health, bounded document listing, single-document reads, and merge-only document upserts. User profiles and audit logs are read-only. Access is limited to Ditto's known production document roots and the `tasks`, `documents`, and `vendors` family subcollections.
