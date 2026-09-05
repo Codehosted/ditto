@@ -26,6 +26,7 @@ const writeRoots = new Set([
   "signatureRequests",
 ]);
 const familySubcollections = new Set(["tasks", "documents", "vendors"]);
+export const maxMcpListResultBytes = 1_000_000;
 
 export type McpDocument = {
   id: string;
@@ -131,7 +132,7 @@ export const dittoMcpTools = [
   },
   {
     name: "ditto_documents_list",
-    description: "List documents in an approved Ditto collection, ordered by document ID.",
+    description: "List documents in an approved Ditto collection, ordered by document ID. Oversized document data is omitted with a path for ditto_document_get.",
     inputSchema: {
       type: "object",
       properties: {
@@ -209,8 +210,39 @@ function jsonRpcError(id: JsonRpcRequest["id"], code: number, message: string) {
 
 function toolResult(result: unknown) {
   return {
-    content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+    content: [{ type: "text", text: JSON.stringify(result) }],
     structuredContent: result,
+  };
+}
+
+function boundedListResult(documents: McpDocument[], requestedLimit: number) {
+  const included: Array<McpDocument | Omit<McpDocument, "data"> & { dataOmitted: true; dataBytes: number }> = [];
+
+  for (const [index, document] of documents.entries()) {
+    const hasMore = index < documents.length - 1 || documents.length === requestedLimit;
+    const candidate = {
+      documents: [...included, document],
+      nextAfterDocumentId: hasMore ? document.id : null,
+    };
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= maxMcpListResultBytes) {
+      included.push(document);
+      continue;
+    }
+
+    if (included.length > 0) {
+      return { documents: included, nextAfterDocumentId: included.at(-1)!.id };
+    }
+
+    const { data, ...metadata } = document;
+    return {
+      documents: [{ ...metadata, dataOmitted: true as const, dataBytes: Buffer.byteLength(JSON.stringify(data), "utf8") }],
+      nextAfterDocumentId: hasMore ? document.id : null,
+    };
+  }
+
+  return {
+    documents: included,
+    nextAfterDocumentId: documents.length === requestedLimit ? documents.at(-1)?.id ?? null : null,
   };
 }
 
@@ -237,10 +269,7 @@ export async function callDittoMcpTool(name: string, input: unknown, store: Ditt
       }
       const afterDocumentId = optionalString(args.afterDocumentId, "After document ID");
       const documents = await store.list(collectionPath, limit as number, afterDocumentId);
-      return {
-        documents,
-        nextAfterDocumentId: documents.length === limit ? documents.at(-1)?.id ?? null : null,
-      };
+      return boundedListResult(documents, limit as number);
     }
 
     case "ditto_document_get": {
@@ -267,34 +296,44 @@ export async function handleMcpRequest(message: JsonRpcRequest, store: DittoMcpS
     return jsonRpcError(id, -32600, "Invalid JSON-RPC request");
   }
 
+  const isNotification = message.id === undefined;
+  let response: ReturnType<typeof jsonRpcResult> | ReturnType<typeof jsonRpcError> | null;
+
   switch (message.method) {
     case "initialize":
-      return jsonRpcResult(id, {
+      response = jsonRpcResult(id, {
         protocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "ditto-production-mcp", version: "1.0.0" },
       });
+      break;
     case "notifications/initialized":
       return null;
     case "ping":
-      return jsonRpcResult(id, {});
+      response = jsonRpcResult(id, {});
+      break;
     case "tools/list":
-      return jsonRpcResult(id, { tools: dittoMcpTools });
+      response = jsonRpcResult(id, { tools: dittoMcpTools });
+      break;
     case "tools/call": {
       const params = message.params && typeof message.params === "object" && !Array.isArray(message.params)
         ? message.params as Record<string, unknown>
         : {};
       if (typeof params.name !== "string" || !params.name) {
-        return jsonRpcError(id, -32602, "Missing tool name");
+        response = jsonRpcError(id, -32602, "Missing tool name");
+        break;
       }
       try {
-        return jsonRpcResult(id, toolResult(await callDittoMcpTool(params.name, params.arguments ?? {}, store)));
+        response = jsonRpcResult(id, toolResult(await callDittoMcpTool(params.name, params.arguments ?? {}, store)));
       } catch (error) {
         const message = error instanceof HttpError ? error.message : "Tool call failed";
-        return jsonRpcResult(id, { isError: true, content: [{ type: "text", text: message }] });
+        response = jsonRpcResult(id, { isError: true, content: [{ type: "text", text: message }] });
       }
+      break;
     }
     default:
-      return jsonRpcError(id, -32601, `Method not found: ${message.method}`);
+      response = jsonRpcError(id, -32601, `Method not found: ${message.method}`);
   }
+
+  return isNotification ? null : response;
 }
