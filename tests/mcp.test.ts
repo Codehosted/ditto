@@ -2,7 +2,15 @@ import { describe, expect, test } from "bun:test";
 
 import { HttpError } from "../api/_lib/errors.js";
 import { requireMcpToken, sha256 } from "../api/_lib/mcp-auth.js";
-import { callDittoMcpTool, handleMcpRequest, maxMcpListResultBytes, type DittoMcpStore, type McpDocument } from "../api/_lib/mcp.js";
+import {
+  callDittoMcpTool,
+  handleMcpRequest,
+  maxMcpDocumentChunkBytes,
+  maxMcpDocumentResultBytes,
+  maxMcpListResultBytes,
+  type DittoMcpStore,
+  type McpDocument,
+} from "../api/_lib/mcp.js";
 import type { DocumentPath } from "../api/_lib/documents.js";
 import mcpHandler from "../api/mcp.js";
 
@@ -152,6 +160,32 @@ describe("Ditto MCP tools", () => {
     const expected = document("families/family-1/tasks/task-1", { title: "Call director" });
     const { store } = fakeStore([expected]);
     expect(await callDittoMcpTool("ditto_document_get", { path: expected.path }, store)).toEqual({ document: expected });
+  });
+
+  test("returns oversized document data in bounded resumable chunks", async () => {
+    const expected = document("families/family-1/documents/document-1", { notes: "🙂".repeat(400_000) });
+    const { store } = fakeStore([expected]);
+    const chunks: Buffer[] = [];
+    let offset: number | null = 0;
+
+    while (offset !== null) {
+      const result = await callDittoMcpTool("ditto_document_get", {
+        path: expected.path,
+        dataOffsetBytes: offset,
+      }, store) as {
+        document: { path: string; data?: unknown; dataOmitted: true; dataBytes: number };
+        dataChunk: { encoding: "base64"; lengthBytes: number; value: string; nextOffsetBytes: number | null };
+      };
+      expect(result.document).toMatchObject({ path: expected.path, dataOmitted: true });
+      expect(result.document.data).toBeUndefined();
+      expect(result.dataChunk.encoding).toBe("base64");
+      expect(result.dataChunk.lengthBytes).toBeLessThanOrEqual(maxMcpDocumentChunkBytes);
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(maxMcpDocumentResultBytes);
+      chunks.push(Buffer.from(result.dataChunk.value, "base64"));
+      offset = result.dataChunk.nextOffsetBytes;
+    }
+
+    expect(Buffer.concat(chunks).toString("utf8")).toBe(JSON.stringify(expected.data));
   });
 
   test("merges approved writes", async () => {

@@ -27,6 +27,8 @@ const writeRoots = new Set([
 ]);
 const familySubcollections = new Set(["tasks", "documents", "vendors"]);
 export const maxMcpListResultBytes = 1_000_000;
+export const maxMcpDocumentResultBytes = 1_000_000;
+export const maxMcpDocumentChunkBytes = 250_000;
 
 export type McpDocument = {
   id: string;
@@ -146,10 +148,14 @@ export const dittoMcpTools = [
   },
   {
     name: "ditto_document_get",
-    description: "Read one document from an approved Ditto path.",
+    description: "Read one document from an approved Ditto path. Oversized data is returned as resumable base64-encoded JSON byte chunks.",
     inputSchema: {
       type: "object",
-      properties: { path: { type: "string", description: "Document path, such as families/FAMILY_ID." } },
+      properties: {
+        path: { type: "string", description: "Document path, such as families/FAMILY_ID." },
+        dataOffsetBytes: { type: "integer", minimum: 0, description: "Byte offset supplied by the previous oversized response." },
+        dataChunkBytes: { type: "integer", minimum: 1, maximum: maxMcpDocumentChunkBytes, default: maxMcpDocumentChunkBytes },
+      },
       required: ["path"],
       additionalProperties: false,
     },
@@ -246,6 +252,41 @@ function boundedListResult(documents: McpDocument[], requestedLimit: number) {
   };
 }
 
+function boundedDocumentResult(document: McpDocument | null, dataOffsetBytes: number, dataChunkBytes: number) {
+  if (!document) return { document: null };
+
+  const fullResult = { document };
+  if (dataOffsetBytes === 0 && Buffer.byteLength(JSON.stringify(fullResult), "utf8") <= maxMcpDocumentResultBytes) {
+    return fullResult;
+  }
+
+  const encodedData = Buffer.from(JSON.stringify(document.data), "utf8");
+  if (dataOffsetBytes > encodedData.length) {
+    throw new HttpError(400, "Data offset exceeds the serialized document length");
+  }
+  const chunk = encodedData.subarray(dataOffsetBytes, dataOffsetBytes + dataChunkBytes);
+  const nextOffsetBytes = dataOffsetBytes + chunk.length;
+  const { data: _data, ...metadata } = document;
+  return {
+    document: { ...metadata, dataOmitted: true as const, dataBytes: encodedData.length },
+    dataChunk: {
+      encoding: "base64" as const,
+      offsetBytes: dataOffsetBytes,
+      lengthBytes: chunk.length,
+      value: chunk.toString("base64"),
+      nextOffsetBytes: nextOffsetBytes < encodedData.length ? nextOffsetBytes : null,
+    },
+  };
+}
+
+function boundedInteger(value: unknown, label: string, fallback: number, minimum: number, maximum = Number.MAX_SAFE_INTEGER) {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new HttpError(400, `${label} must be an integer from ${minimum} to ${maximum}`);
+  }
+  return value as number;
+}
+
 export async function callDittoMcpTool(name: string, input: unknown, store: DittoMcpStore = postgresMcpStore) {
   const args = objectArguments(input);
 
@@ -275,7 +316,9 @@ export async function callDittoMcpTool(name: string, input: unknown, store: Ditt
     case "ditto_document_get": {
       const target = parseDocumentPath(args.path);
       assertRoot(target.path, false);
-      return { document: await store.get(target.path) };
+      const dataOffsetBytes = boundedInteger(args.dataOffsetBytes, "Data offset", 0, 0);
+      const dataChunkBytes = boundedInteger(args.dataChunkBytes, "Data chunk size", maxMcpDocumentChunkBytes, 1, maxMcpDocumentChunkBytes);
+      return boundedDocumentResult(await store.get(target.path), dataOffsetBytes, dataChunkBytes);
     }
 
     case "ditto_document_upsert": {
