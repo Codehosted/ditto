@@ -14,6 +14,7 @@ import AIChat from "./components/AIChat";
 import FAQ from "./components/FAQ";
 import SmartSearch from "./components/SmartSearch";
 import DevToolbar from "./components/DevToolbar";
+import CookieConsent from "./components/CookieConsent";
 import { FirebaseProvider, ErrorBoundary, useFirebase } from "./components/FirebaseProvider";
 
 const FadeIn = ({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) => (
@@ -33,6 +34,7 @@ export default function App() {
       <FirebaseProvider>
         <AppContent />
         <DevToolbar />
+        <CookieConsent />
       </FirebaseProvider>
     </ErrorBoundary>
   );
