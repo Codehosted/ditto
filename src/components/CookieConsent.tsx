@@ -11,18 +11,43 @@ const STORAGE_KEY = "ditto_cookie_consent";
 
 type ConsentChoice = "accepted" | "declined";
 
-export default function CookieConsent() {
+// Browsers can block storage access entirely (restricted third-party iframes,
+// "block all cookies" settings). A SecurityError here would bubble up through
+// the top-level ErrorBoundary and take down the whole app, so treat blocked
+// storage as "no preference recorded" and degrade gracefully: the banner still
+// shows, the choice just isn't persisted.
+function readStoredConsent(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredConsent(choice: ConsentChoice): void {
+  try {
+    localStorage.setItem(STORAGE_KEY, choice);
+  } catch {
+    // Storage unavailable — the banner hides for this session only.
+  }
+}
+
+interface CookieConsentProps {
+  onOpenPrivacy: () => void;
+}
+
+export default function CookieConsent({ onOpenPrivacy }: CookieConsentProps) {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (!localStorage.getItem(STORAGE_KEY)) {
+    if (!readStoredConsent()) {
       const timer = setTimeout(() => setVisible(true), 1200);
       return () => clearTimeout(timer);
     }
   }, []);
 
   const choose = (choice: ConsentChoice) => {
-    localStorage.setItem(STORAGE_KEY, choice);
+    writeStoredConsent(choice);
     setVisible(false);
   };
 
@@ -47,9 +72,13 @@ export default function CookieConsent() {
                 <p className="text-sm text-stone-300 leading-relaxed font-light">
                   We use cookies to keep you signed in and to understand how the site
                   is used, so we can make Ditto better. Read our{" "}
-                  <a href="#" className="underline underline-offset-2 hover:text-stone-50 transition-colors">
+                  <button
+                    type="button"
+                    onClick={onOpenPrivacy}
+                    className="underline underline-offset-2 hover:text-stone-50 transition-colors"
+                  >
                     Privacy Policy
-                  </a>{" "}
+                  </button>{" "}
                   to learn more.
                 </p>
               </div>
