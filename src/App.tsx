@@ -113,14 +113,33 @@ function AppContent() {
             Ditto
           </button>
           <div className="flex gap-8 text-sm font-medium text-stone-600 items-center">
-            <a href="#how-it-works" className="hover:text-stone-900 transition-colors">How it works</a>
-            <a href="#faq" className="hover:text-stone-900 transition-colors">FAQ</a>
-            <a href="#pricing" className="hover:text-stone-900 transition-colors">Pricing</a>
-            <button 
+            <a
+              href="#how-it-works"
+              className="nav-link group relative hover:text-stone-900 transition-colors"
+            >
+              How it works
+              <span className="absolute left-0 -bottom-1 h-px w-full bg-stone-900 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300 ease-out" />
+            </a>
+            <a
+              href="#faq"
+              className="nav-link group relative hover:text-stone-900 transition-colors"
+            >
+              FAQ
+              <span className="absolute left-0 -bottom-1 h-px w-full bg-stone-900 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300 ease-out" />
+            </a>
+            <a
+              href="#pricing"
+              className="nav-link group relative hover:text-stone-900 transition-colors"
+            >
+              Pricing
+              <span className="absolute left-0 -bottom-1 h-px w-full bg-stone-900 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300 ease-out" />
+            </a>
+            <button
               onClick={handleVendorPortal}
-              className="text-stone-900 hover:opacity-70 transition-opacity"
+              className="nav-link group relative text-stone-900 hover:opacity-70 transition-opacity"
             >
               Vendor Login
+              <span className="absolute left-0 -bottom-1 h-px w-full bg-stone-900 scale-x-0 group-hover:scale-x-100 origin-left transition-transform duration-300 ease-out" />
             </button>
             {loading ? (
               <div className="w-8 h-8 rounded-full bg-stone-100 animate-pulse" />
