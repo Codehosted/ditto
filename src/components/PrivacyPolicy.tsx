@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Shield, X } from "lucide-react";
 
@@ -13,20 +13,55 @@ interface PrivacyPolicyProps {
 }
 
 export default function PrivacyPolicy({ open, onClose }: PrivacyPolicyProps) {
-  // Close on Escape for keyboard users
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  // Keep keyboard focus in the modal, then restore the triggering control.
   useEffect(() => {
     if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const controls = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ) ?? []);
+    const focusFirst = () => controls()[0]?.focus();
+    focusFirst();
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCloseRef.current();
+      }
+      if (e.key === "Tab") {
+        const items = controls();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last?.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first?.focus();
+        }
+      }
+    };
+    const handleFocus = (e: FocusEvent) => {
+      if (!dialog?.contains(e.target as Node)) focusFirst();
     };
     window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [open, onClose]);
+    document.addEventListener("focusin", handleFocus);
+    return () => {
+      window.removeEventListener("keydown", handleKey);
+      document.removeEventListener("focusin", handleFocus);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open]);
 
   return (
     <AnimatePresence>
       {open && (
         <motion.div
+          ref={dialogRef}
           role="dialog"
           aria-modal="true"
           aria-label="Privacy Policy"
