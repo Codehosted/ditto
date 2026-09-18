@@ -10,6 +10,7 @@
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
     "test:mcp": "bun test tests/mcp.test.ts",
+    "test:privacy": "bun test --preload ./tests/dom.ts tests/privacy.test.tsx",
     "mcp:token": "bun run scripts/generate-mcp-agent-token.ts"
   },
   "dependencies": {
@@ -43,6 +44,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.21",
+    "happy-dom": "20.14.5",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"

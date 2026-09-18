@@ -14,6 +14,8 @@ import AIChat from "./components/AIChat";
 import FAQ from "./components/FAQ";
 import SmartSearch from "./components/SmartSearch";
 import DevToolbar from "./components/DevToolbar";
+import CookieConsent from "./components/CookieConsent";
+import PrivacyPolicy from "./components/PrivacyPolicy";
 import { FirebaseProvider, ErrorBoundary, useFirebase } from "./components/FirebaseProvider";
 
 const FadeIn = ({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) => (
@@ -28,17 +30,25 @@ const FadeIn = ({ children, delay = 0 }: { children: React.ReactNode; delay?: nu
 );
 
 export default function App() {
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+
   return (
     <ErrorBoundary>
       <FirebaseProvider>
-        <AppContent />
+        <AppContent onOpenPrivacy={() => setPrivacyOpen(true)} />
         <DevToolbar />
+        <CookieConsent onOpenPrivacy={() => setPrivacyOpen(true)} />
+        <PrivacyPolicy open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
       </FirebaseProvider>
     </ErrorBoundary>
   );
 }
 
-function AppContent() {
+interface AppContentProps {
+  onOpenPrivacy: () => void;
+}
+
+function AppContent({ onOpenPrivacy }: AppContentProps) {
   const [view, setView] = useState<"landing" | "onboarding" | "dashboard" | "vendor-portal">("landing");
   const { user, profile, loading, familyData, signInWithGoogle, signInAsGuest, signOutUser } = useFirebase();
 
@@ -403,7 +413,7 @@ function AppContent() {
           <div className="flex gap-8 text-xs text-stone-400 font-medium uppercase tracking-widest">
             <button onClick={handleVendorPortal} className="hover:text-stone-600 transition-colors">Vendor Portal</button>
             <a href="#faq" className="hover:text-stone-600 transition-colors">FAQ</a>
-            <a href="#" className="hover:text-stone-600 transition-colors">Privacy Policy</a>
+            <button onClick={onOpenPrivacy} className="hover:text-stone-600 transition-colors">Privacy Policy</button>
             <a href="#" className="hover:text-stone-600 transition-colors">Terms of Service</a>
             <a href="#" className="hover:text-stone-600 transition-colors">Contact Us</a>
           </div>
